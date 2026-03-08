@@ -1,0 +1,74 @@
+@import 'leaflet/dist/leaflet.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0F0F0F;
+  --card: #181818;
+  --card-hover: #1f1f1f;
+  --border: #2a2a2a;
+  --muted: #9CA3AF;
+  --green: #22c55e;
+  --red: #ef4444;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg);
+  color: #fff;
+  background-image:
+    radial-gradient(circle at 15% 10%, rgba(255, 255, 255, 0.08), transparent 28%),
+    radial-gradient(circle at 90% 20%, rgba(255, 255, 255, 0.05), transparent 26%),
+    linear-gradient(180deg, #111111 0%, #0f0f0f 100%);
+  font-family: var(--font-body), "Avenir Next", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  font-family: var(--font-display), "Bodoni Moda", serif;
+}
+
+/* Hide scrollbar for category scroll */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.leaflet-pin {
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: #ffffff;
+  border: 3px solid #111111;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+
+.leaflet-container {
+  z-index: 0;
+}
+
+/* Input styling */
+input, textarea, select {
+  border: 1px solid var(--border);
+  outline: none;
+  transition: border-color 0.2s;
+}
+input:focus, textarea:focus, select:focus {
+  border-color: #fff;
+}

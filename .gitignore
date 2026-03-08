@@ -1,0 +1,15 @@
+.next
+node_modules
+dist
+.env
+.env.local
+.env.development
+.env.production
+coverage
+*.log
+/.vscode
+/.idea
+public/uploads
+
+# clerk configuration (can include secrets)
+/.clerk/
