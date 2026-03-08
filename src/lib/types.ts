@@ -121,3 +121,11 @@ export type CustomerPhoneRecord = {
   phone: string
   created_at: string
 }
+
+export type AdminPhoneRecord = {
+  id: string
+  phone: string
+  label: string | null
+  is_active: boolean
+  created_at: string
+}

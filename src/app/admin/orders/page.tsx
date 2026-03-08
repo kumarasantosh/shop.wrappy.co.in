@@ -68,6 +68,8 @@ function OrderCard({
   onComplete: (id: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
+  const [verifyCode, setVerifyCode] = useState('')
+  const [verifyError, setVerifyError] = useState(false)
   const meta = parseOrderMeta(order.instructions)
   const cleanInstructions = stripOrderMeta(order.instructions)
   const items = (order.order_items || []) as OrderItemRecord[]
@@ -76,6 +78,7 @@ function OrderCard({
   const isAccepted = order.status === 'preparing'
   const isReady = order.status === 'out_for_delivery'
   const timer = useAcceptTimer(order.created_at)
+  const isPickup = meta.orderType === 'pickup'
 
   return (
     <motion.div
@@ -110,9 +113,9 @@ function OrderCard({
             <p className="mt-0.5 text-xs text-emerald-400">
               Code: {meta.pickupCode}
               {meta.pickupSlot
-                ? ` · ${new Date(meta.pickupSlot).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
+                ? ` · ${new Date(meta.pickupSlot).toLocaleString([], {
+                  dateStyle: 'medium',
+                  timeStyle: 'short',
                 })}`
                 : ''}
             </p>
@@ -806,7 +809,7 @@ export default function AdminOrdersPage() {
                                     {meta.orderType === 'pickup' && meta.pickupCode && (
                                       <div className="rounded-xl bg-white/5 p-3 text-xs text-emerald-400">
                                         Code: {meta.pickupCode}
-                                        {meta.pickupSlot ? ` · Slot: ${new Date(meta.pickupSlot).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
+                                        {meta.pickupSlot ? ` · Pickup: ${new Date(meta.pickupSlot).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : ''}
                                       </div>
                                     )}
 
@@ -837,6 +840,7 @@ export default function AdminOrdersPage() {
           )}
         </div>
       )}
+
     </div>
   )
 }

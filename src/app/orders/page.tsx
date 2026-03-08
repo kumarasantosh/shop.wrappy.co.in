@@ -153,10 +153,10 @@ export default function OrdersPage() {
                       <p className="font-semibold text-emerald-300">Self Pickup</p>
                       {meta.pickupSlot ? (
                         <p className="mt-1 text-emerald-200">
-                          Slot:{' '}
-                          {new Date(meta.pickupSlot).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
+                          Pickup:{' '}
+                          {new Date(meta.pickupSlot).toLocaleString([], {
+                            dateStyle: 'medium',
+                            timeStyle: 'short',
                           })}
                         </p>
                       ) : null}
@@ -215,8 +215,8 @@ export default function OrdersPage() {
                 </span>
                 <span
                   className={`rounded-full px-2.5 py-1 text-xs ${selectedOrderMeta?.orderType === 'pickup'
-                      ? 'bg-emerald-500/15 text-emerald-300'
-                      : 'bg-blue-500/15 text-blue-300'
+                    ? 'bg-emerald-500/15 text-emerald-300'
+                    : 'bg-blue-500/15 text-blue-300'
                     }`}
                 >
                   {selectedOrderMeta?.orderType === 'pickup' ? 'Self Pickup' : 'Delivery'}
@@ -286,10 +286,10 @@ export default function OrdersPage() {
                   <p>Self Pickup at Store</p>
                   {selectedOrderMeta.pickupSlot ? (
                     <p>
-                      Pickup Slot:{' '}
-                      {new Date(selectedOrderMeta.pickupSlot).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
+                      Pickup:{' '}
+                      {new Date(selectedOrderMeta.pickupSlot).toLocaleString([], {
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
                       })}
                     </p>
                   ) : null}

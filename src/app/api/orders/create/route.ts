@@ -167,11 +167,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'pickup_slot_required' }, { status: 400 })
       }
 
-      const now = Date.now()
-      const slotMs = slotDate.getTime()
-      const maxAllowed = now + 2 * 60 * 60 * 1000
-      if (slotMs < now || slotMs > maxAllowed) {
-        return NextResponse.json({ error: 'pickup_slot_out_of_range' }, { status: 400 })
+      if (slotDate.getTime() < Date.now() - 60_000) {
+        return NextResponse.json({ error: 'pickup_slot_in_past' }, { status: 400 })
       }
 
       pickupSlotIso = slotDate.toISOString()

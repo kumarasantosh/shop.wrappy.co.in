@@ -105,10 +105,23 @@ export default function OrderTracker({
         remainingSeconds
       )} left`
     }
+    if (isPickup && eta) {
+      const pickupTime = new Date(eta)
+      const prepTime = new Date(pickupTime.getTime() - 20 * 60_000)
+      const pickupLabel = pickupTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      const prepLabel = prepTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      if (status === 'placed') {
+        const minsUntilPrep = Math.max(0, Math.ceil((prepTime.getTime() - Date.now()) / 60_000))
+        return minsUntilPrep > 0
+          ? `Prep starts at ${prepLabel} (in ${minsUntilPrep}m)`
+          : `Prep starting soon • Pickup at ${pickupLabel}`
+      }
+      return `Pickup at ${pickupLabel} • ${formatCountdown(remainingSeconds)} left`
+    }
     return isPickup
       ? `Ready in ${formatCountdown(remainingSeconds)}`
       : `ETA ${formatCountdown(remainingSeconds)}`
-  }, [delayBumps, remainingSeconds, status, isPickup, isComplete, isCancelled])
+  }, [delayBumps, remainingSeconds, status, isPickup, isComplete, isCancelled, eta])
 
   const trackingIcon = isPickup ? '📦' : '🛵'
 
@@ -126,10 +139,10 @@ export default function OrderTracker({
         </div>
         <span
           className={`rounded-full px-3 py-1 text-xs font-semibold ${isComplete
-              ? 'bg-green-500/10 text-green-400'
-              : isCancelled
-                ? 'bg-red-500/10 text-red-400'
-                : 'bg-yellow-500/10 text-yellow-300'
+            ? 'bg-green-500/10 text-green-400'
+            : isCancelled
+              ? 'bg-red-500/10 text-red-400'
+              : 'bg-yellow-500/10 text-yellow-300'
             }`}
         >
           {statusLabel}

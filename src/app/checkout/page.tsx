@@ -42,31 +42,13 @@ type NominatimSearchResult = {
 
 type OrderType = 'delivery' | 'pickup'
 
-type PickupSlotOption = {
-  value: string
-  label: string
-}
-
-function buildPickupSlots(nowDate: Date): PickupSlotOption[] {
-  const stepMinutes = 15
-  const windowMinutes = 120
-  const stepMs = stepMinutes * 60_000
-
-  const roundedStartMs = Math.ceil(nowDate.getTime() / stepMs) * stepMs
-  const slots: PickupSlotOption[] = []
-
-  for (let minutes = 0; minutes <= windowMinutes; minutes += stepMinutes) {
-    const slot = new Date(roundedStartMs + minutes * 60_000)
-    slots.push({
-      value: slot.toISOString(),
-      label: slot.toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-    })
-  }
-
-  return slots
+function toLocalDatetimeString(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  const h = String(date.getHours()).padStart(2, '0')
+  const min = String(date.getMinutes()).padStart(2, '0')
+  return `${y}-${m}-${d}T${h}:${min}`
 }
 
 function loadRazorpayScript() {
@@ -250,7 +232,6 @@ export default function CheckoutPage() {
   const [pickupSlot, setPickupSlot] = useState('')
   const [pickupCode, setPickupCode] = useState('')
   const [includePickupPacking, setIncludePickupPacking] = useState(true)
-  const [pickupClockTick, setPickupClockTick] = useState(Date.now())
   const [phone, setPhone] = useState('')
   const [savedPhones, setSavedPhones] = useState<CustomerPhoneRecord[]>([])
   const [phonesLoading, setPhonesLoading] = useState(false)
@@ -284,10 +265,23 @@ export default function CheckoutPage() {
   const packingFee = shouldChargePacking ? totalItemCount * PACKING_FEE_PER_ITEM : 0
   const deliveryFee = 0
   const total = taxableAmount + tax + packingFee + deliveryFee
-  const pickupSlots = useMemo(
-    () => buildPickupSlots(new Date(pickupClockTick)),
-    [pickupClockTick]
+  const [pickupMinDatetime, setPickupMinDatetime] = useState(() =>
+    toLocalDatetimeString(new Date(Date.now() + 30 * 60_000))
   )
+  useEffect(() => {
+    const tick = () => {
+      const minDate = new Date(Date.now() + 30 * 60_000)
+      setPickupMinDatetime(toLocalDatetimeString(minDate))
+      // Auto-clear stale selection
+      setPickupSlot((current) => {
+        if (current && new Date(current).getTime() < minDate.getTime()) return ''
+        return current
+      })
+    }
+    const interval = setInterval(tick, 30_000)
+    tick() // run immediately on mount/re-render
+    return () => clearInterval(interval)
+  }, [])
 
   const selectedAddress = useMemo(
     () => addresses.find((address) => address.id === selectedAddressId) || null,
@@ -321,20 +315,7 @@ export default function CheckoutPage() {
     orderType === 'delivery' && selectedAddress && resolvingDistance
   )
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setPickupClockTick(Date.now())
-    }, 60_000)
-    return () => clearInterval(interval)
-  }, [])
 
-  useEffect(() => {
-    if (orderType !== 'pickup') return
-    const hasCurrent = pickupSlots.some((slot) => slot.value === pickupSlot)
-    if (!hasCurrent) {
-      setPickupSlot(pickupSlots[0]?.value || '')
-    }
-  }, [orderType, pickupSlots, pickupSlot])
 
   useEffect(() => {
     if (orderType === 'delivery') {
@@ -832,7 +813,12 @@ export default function CheckoutPage() {
 
     if (isPickup) {
       if (!pickupSlot) {
-        alert('Please select a pickup time slot.')
+        alert('Please select a pickup date & time.')
+        return
+      }
+      const pickupDate = new Date(pickupSlot)
+      if (pickupDate.getTime() < Date.now() + 30 * 60_000) {
+        alert('Pickup time must be at least 30 minutes from now.')
         return
       }
     } else {
@@ -1308,21 +1294,26 @@ export default function CheckoutPage() {
           ) : (
             <div className="space-y-3 rounded-2xl border border-white/10 bg-[#222] p-4">
               <p className="text-sm font-medium text-gray-300">Pickup Options</p>
-              <label className="block text-xs text-gray-500">Pickup Time Slot (Next 2 hours)</label>
-              <select
+              <label className="block text-xs text-gray-500">Pickup Date & Time</label>
+              <input
+                type="datetime-local"
                 value={pickupSlot}
+                min={pickupMinDatetime}
                 onChange={(event) => setPickupSlot(event.target.value)}
-                className="w-full rounded-xl border border-white/10 bg-[#181818] p-3 text-sm text-white"
-              >
-                {pickupSlots.map((slot) => (
-                  <option key={slot.value} value={slot.value}>
-                    {slot.label}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-gray-500">
-                Choose your pickup window. Verification code will be generated after payment.
-              </p>
+                className={`w-full rounded-xl border bg-[#181818] p-3 text-sm text-white [color-scheme:dark] ${pickupSlot && new Date(pickupSlot).getTime() < Date.now() + 30 * 60_000
+                  ? 'border-red-500/60'
+                  : 'border-white/10'
+                  }`}
+              />
+              {pickupSlot && new Date(pickupSlot).getTime() < Date.now() + 30 * 60_000 ? (
+                <p className="text-xs text-red-400">
+                  Pickup time must be at least 30 minutes from now.
+                </p>
+              ) : (
+                <p className="text-xs text-gray-500">
+                  Choose your preferred pickup date and time. Verification code will be generated after payment.
+                </p>
+              )}
               {pickupCode ? (
                 <div className="rounded-xl border border-green-500/25 bg-green-500/10 p-3 text-xs text-green-300">
                   Pickup Code: <span className="font-semibold">{pickupCode}</span>
@@ -1453,11 +1444,11 @@ export default function CheckoutPage() {
             <div className="rounded-xl border border-white/10 bg-[#222] p-3 text-xs text-gray-400">
               <p className="mb-1 font-semibold text-white">Self Pickup</p>
               <p>
-                Pickup slot:{' '}
+                Pickup:{' '}
                 {pickupSlot
-                  ? new Date(pickupSlot).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
+                  ? new Date(pickupSlot).toLocaleString([], {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
                   })
                   : 'Not selected'}
               </p>
@@ -1537,7 +1528,7 @@ export default function CheckoutPage() {
               : isDeliveryDistancePending
                 ? 'Validating delivery range...'
                 : orderType === 'pickup' && !pickupSlot
-                  ? 'Select pickup slot'
+                  ? 'Select pickup date & time'
                   : `Pay ₹${total} with Razorpay`}
           </button>
         </div>

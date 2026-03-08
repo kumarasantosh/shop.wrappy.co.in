@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '../../../../../lib/admin'
 import { supabaseAdmin } from '../../../../../lib/supabaseAdmin'
+import { sendWhatsAppTemplate } from '../../../../../lib/whatsapp'
 
 type Status =
   | 'placed'
@@ -34,10 +35,24 @@ export async function POST(req: Request) {
     .from('orders')
     .update(payload)
     .eq('id', id)
-    .select('*')
+    .select('*, customer_phones(phone)')
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // When order is accepted (preparing), send WhatsApp to customer
+  if (status === 'preparing' && data) {
+    const customerPhone =
+      data.phone ||
+      (data as any).customer_phones?.[0]?.phone ||
+      null
+
+    if (customerPhone) {
+      sendWhatsAppTemplate(customerPhone, 'hello_world').catch((err: unknown) =>
+        console.error('[WhatsApp] Failed to notify customer:', err)
+      )
+    }
+  }
 
   return NextResponse.json({ order: data })
 }

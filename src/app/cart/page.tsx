@@ -12,7 +12,6 @@ type DiscountState = {
 }
 
 const TAX_RATE = 0.05
-const PACKING_FEE_PER_ITEM = 5
 
 export default function CartPage() {
   const { user } = useUser()
@@ -48,9 +47,7 @@ export default function CartPage() {
   const discountAmount = effectiveDiscount?.discount || 0
   const taxableAmount = Math.max(0, subtotal - discountAmount)
   const tax = Math.round(taxableAmount * TAX_RATE)
-  const packingFee = totalItemCount * PACKING_FEE_PER_ITEM
-  const deliveryFee = 0
-  const total = taxableAmount + tax + packingFee + deliveryFee
+  const total = taxableAmount + tax
 
   useEffect(() => {
     if (!subtotal) {
@@ -194,9 +191,8 @@ export default function CartPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span
-                      className={`h-3 w-3 rounded-full ${
-                        item.isVeg ? 'bg-green-500' : 'bg-red-500'
-                      }`}
+                      className={`h-3 w-3 rounded-full ${item.isVeg ? 'bg-green-500' : 'bg-red-500'
+                        }`}
                     />
                     <h3 className="truncate font-medium">{item.name}</h3>
                   </div>
@@ -270,9 +266,8 @@ export default function CartPage() {
             )}
             {couponMsg && (
               <p
-                className={`text-xs ${
-                  manualDiscount ? 'text-green-400' : 'text-red-400'
-                }`}
+                className={`text-xs ${manualDiscount ? 'text-green-400' : 'text-red-400'
+                  }`}
               >
                 {couponMsg}
               </p>
@@ -306,12 +301,7 @@ export default function CartPage() {
               <span className="text-gray-400">GST (5%)</span>
               <span>₹{tax}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-400">
-                Packing (₹{PACKING_FEE_PER_ITEM} × {totalItemCount})
-              </span>
-              <span>₹{packingFee}</span>
-            </div>
+
             <div className="flex justify-between border-t border-white/10 pt-3 text-base font-bold">
               <span>Grand Total</span>
               <span>₹{total}</span>
