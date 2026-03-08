@@ -35,17 +35,25 @@ export async function POST(req: Request) {
     .from('orders')
     .update(payload)
     .eq('id', id)
-    .select('*, customer_phones(phone)')
+    .select('*')
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // When order is accepted (preparing), send WhatsApp to customer
   if (status === 'preparing' && data) {
-    const customerPhone =
-      data.phone ||
-      (data as any).customer_phones?.[0]?.phone ||
-      null
+    let customerPhone: string | null = data.phone || null
+
+    // If no phone on order, look up from customer_phones table
+    if (!customerPhone && data.customer_clerk_id) {
+      const { data: cp } = await supabaseAdmin
+        .from('customer_phones')
+        .select('phone')
+        .eq('customer_clerk_id', data.customer_clerk_id)
+        .limit(1)
+        .single()
+      customerPhone = cp?.phone || null
+    }
 
     if (customerPhone) {
       sendWhatsAppTemplate(customerPhone, 'hello_world').catch((err: unknown) =>
