@@ -2,10 +2,8 @@ import { auth } from '@clerk/nextjs/server'
 import { NextResponse } from 'next/server'
 import Razorpay from 'razorpay'
 import {
-  bestCouponForCart,
   calcSubtotal,
   computeDiscount,
-  fetchActiveCoupons,
   isFirstOrderCustomer,
   validateCoupon,
 } from '../../../../lib/discounts'
@@ -83,6 +81,54 @@ function computeEta(settings: StoreSettingsRecord, nowDate: Date = new Date()): 
   return { eta: new Date(nowDate.getTime() + etaMinutes * 60_000).toISOString(), etaMinutes }
 }
 
+const DATETIME_LOCAL_REGEX =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/
+const DEFAULT_STORE_TIMEZONE_OFFSET_MINUTES = Number(
+  process.env.STORE_TIMEZONE_OFFSET_MINUTES || -330
+)
+
+function parsePickupSlotToDate(
+  pickupSlot: string | undefined,
+  pickupSlotTimezoneOffsetMinutes: number | undefined
+) {
+  const raw = String(pickupSlot || '').trim()
+  if (!raw) return null
+
+  const hasExplicitTimezone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(raw)
+  if (hasExplicitTimezone) {
+    const parsed = new Date(raw)
+    if (!Number.isNaN(parsed.getTime())) return parsed
+  }
+
+  const localMatch = raw.match(DATETIME_LOCAL_REGEX)
+  if (localMatch) {
+    const [, year, month, day, hour, minute, second] = localMatch
+    const providedOffset = Number(pickupSlotTimezoneOffsetMinutes)
+    const offset =
+      Number.isFinite(providedOffset) && Math.abs(providedOffset) <= 14 * 60
+        ? providedOffset
+        : DEFAULT_STORE_TIMEZONE_OFFSET_MINUTES
+
+    const utcTimeMs =
+      Date.UTC(
+        Number(year),
+        Number(month) - 1,
+        Number(day),
+        Number(hour),
+        Number(minute),
+        Number(second || 0)
+      ) +
+      offset * 60_000
+
+    const parsed = new Date(utcTimeMs)
+    if (!Number.isNaN(parsed.getTime())) return parsed
+  }
+
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return null
+  return parsed
+}
+
 export async function POST(req: Request) {
   try {
     const { userId } = await auth()
@@ -99,6 +145,7 @@ export async function POST(req: Request) {
       paymentMethod?: 'razorpay'
       orderType?: OrderType
       pickupSlot?: string
+      pickupSlotTimezoneOffsetMinutes?: number
       includePacking?: boolean
       latitude?: number
       longitude?: number
@@ -162,8 +209,11 @@ export async function POST(req: Request) {
     let pickupCode: string | null = null
 
     if (orderType === 'pickup') {
-      const slotDate = body.pickupSlot ? new Date(body.pickupSlot) : null
-      if (!slotDate || Number.isNaN(slotDate.getTime())) {
+      const slotDate = parsePickupSlotToDate(
+        body.pickupSlot,
+        body.pickupSlotTimezoneOffsetMinutes
+      )
+      if (!slotDate) {
         return NextResponse.json({ error: 'pickup_slot_required' }, { status: 400 })
       }
 
@@ -271,14 +321,6 @@ export async function POST(req: Request) {
         appliedCoupon = codeCoupon
         discountAmount = discount.discount
       }
-    }
-
-    // Auto apply best discount if it is better than manually selected discount.
-    const activeCoupons = hasSupabase ? await fetchActiveCoupons() : []
-    const best = bestCouponForCart(subtotal, activeCoupons, firstOrder)
-    if (best && best.discount > discountAmount) {
-      appliedCoupon = best.coupon
-      discountAmount = best.discount
     }
 
     const discountedSubtotal = Math.max(0, subtotal - discountAmount)

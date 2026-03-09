@@ -237,9 +237,11 @@ export default function CheckoutPage() {
   const [phonesLoading, setPhonesLoading] = useState(false)
   const [useCustomPhone, setUseCustomPhone] = useState(false)
   const [instructions, setInstructions] = useState('')
-  const [couponCode, setCouponCode] = useState(storedCouponCode || '')
+  const selectedCouponCode = String(storedCouponCode || '').trim().toUpperCase()
   const [discountAmount, setDiscountAmount] = useState(0)
   const [discountLabel, setDiscountLabel] = useState('')
+  const [couponStatus, setCouponStatus] = useState<'idle' | 'loading' | 'valid' | 'invalid'>('idle')
+  const [couponStatusMessage, setCouponStatusMessage] = useState('')
   const [loading, setLoading] = useState(false)
   const [resolvedDistanceCheck, setResolvedDistanceCheck] = useState<{
     addressId: string
@@ -537,15 +539,24 @@ export default function CheckoutPage() {
   }, [isLoaded, user?.id])
 
   useEffect(() => {
-    if (!subtotal) return
+    if (!selectedCouponCode || subtotal <= 0) {
+      setDiscountAmount(0)
+      setDiscountLabel('')
+      setCouponStatus('idle')
+      setCouponStatusMessage('')
+      return
+    }
 
     let cancelled = false
-    async function computeBestDiscount() {
+    async function validateSelectedCoupon() {
+      setCouponStatus('loading')
+      setCouponStatusMessage(`Checking ${selectedCouponCode} from cart...`)
       try {
-        const response = await fetch('/api/discounts/best', {
+        const response = await fetch('/api/coupons/validate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            code: selectedCouponCode,
             subtotal,
             customerClerkId: user?.id,
           }),
@@ -553,31 +564,36 @@ export default function CheckoutPage() {
         const payload = await response.json()
         if (cancelled) return
 
-        if (payload.best?.coupon) {
-          const bestCode = String(payload.best.coupon.code || '')
-          const bestDiscount = Number(payload.best.discount || 0)
-          setDiscountAmount(bestDiscount)
-          setDiscountLabel(bestCode ? `Applied ${bestCode}` : '')
-          if (!couponCode) {
-            setCouponCode(bestCode)
-          }
-        } else {
+        if (!response.ok || !payload.valid || !payload.coupon) {
           setDiscountAmount(0)
           setDiscountLabel('')
+          setCouponStatus('invalid')
+          setCouponStatusMessage(
+            `${selectedCouponCode} is not valid for this order. Update coupon in cart.`
+          )
+          return
         }
+
+        const resolvedCode = String(payload.coupon.code || selectedCouponCode).toUpperCase()
+        const resolvedDiscount = Number(payload.discount?.discount || 0)
+        setDiscountAmount(resolvedDiscount)
+        setDiscountLabel(`Discount (${resolvedCode})`)
+        setCouponStatus('valid')
+        setCouponStatusMessage(`${resolvedCode} selected from cart.`)
       } catch {
-        if (!cancelled) {
-          setDiscountAmount(0)
-          setDiscountLabel('')
-        }
+        if (cancelled) return
+        setDiscountAmount(0)
+        setDiscountLabel('')
+        setCouponStatus('invalid')
+        setCouponStatusMessage('Could not verify coupon from cart. Try again.')
       }
     }
 
-    computeBestDiscount()
+    validateSelectedCoupon()
     return () => {
       cancelled = true
     }
-  }, [subtotal, user?.id, couponCode])
+  }, [selectedCouponCode, subtotal, user?.id])
 
   function startAddAddress() {
     setEditingAddressId(null)
@@ -873,9 +889,16 @@ export default function CheckoutPage() {
           address: finalAddress,
           phone: phone.trim() || undefined,
           instructions,
-          couponCode: couponCode || undefined,
+          couponCode: selectedCouponCode || undefined,
           orderType,
-          pickupSlot: isPickup ? pickupSlot : undefined,
+          pickupSlot:
+            isPickup && pickupSlot
+              ? new Date(pickupSlot).toISOString()
+              : undefined,
+          pickupSlotTimezoneOffsetMinutes:
+            isPickup && pickupSlot
+              ? new Date(pickupSlot).getTimezoneOffset()
+              : undefined,
           includePacking: isPickup ? includePickupPacking : true,
           latitude,
           longitude,
@@ -989,8 +1012,10 @@ export default function CheckoutPage() {
     }
   }
 
+  const hasInvalidCartCoupon = Boolean(selectedCouponCode) && couponStatus === 'invalid'
   const placeOrderDisabled =
     loading ||
+    hasInvalidCartCoupon ||
     (orderType === 'delivery'
       ? !selectedAddress || isOutsideDeliveryRange || isDeliveryDistancePending
       : !pickupSlot)
@@ -1398,13 +1423,38 @@ export default function CheckoutPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm text-gray-500">Coupon Code</label>
-            <input
-              value={couponCode}
-              onChange={(event) => setCouponCode(event.target.value.toUpperCase())}
-              placeholder="Optional coupon"
-              className="w-full rounded-xl border border-white/10 bg-[#222] p-3 text-sm text-white placeholder:text-gray-600"
-            />
+            <label className="mb-1 block text-sm text-gray-500">Coupon</label>
+            {selectedCouponCode ? (
+              <div className="rounded-xl border border-white/10 bg-[#222] p-3 text-xs">
+                <p className="font-medium text-white">
+                  Selected in cart: <span className="text-emerald-300">{selectedCouponCode}</span>
+                </p>
+                <p
+                  className={`mt-1 ${
+                    couponStatus === 'invalid'
+                      ? 'text-red-400'
+                      : couponStatus === 'valid'
+                        ? 'text-green-400'
+                        : 'text-gray-400'
+                  }`}
+                >
+                  {couponStatusMessage || 'Coupon will be validated before payment.'}
+                </p>
+                <p className="mt-2 text-gray-500">
+                  To change coupon, update it in cart.
+                </p>
+                <Link href="/cart" className="mt-1 inline-block text-indigo-400 hover:text-indigo-300">
+                  Go to cart →
+                </Link>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-white/10 bg-[#222] p-3 text-xs text-gray-400">
+                No coupon selected in cart. Add coupon from cart if needed.
+                <Link href="/cart" className="mt-1 block text-indigo-400 hover:text-indigo-300">
+                  Go to cart →
+                </Link>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1517,6 +1567,12 @@ export default function CheckoutPage() {
               <span>₹{total}</span>
             </div>
           </div>
+
+          {hasInvalidCartCoupon && (
+            <p className="text-xs text-red-400">
+              Selected cart coupon is invalid. Update coupon in cart to continue.
+            </p>
+          )}
 
           <button
             onClick={handlePlaceOrder}

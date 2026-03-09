@@ -8,7 +8,6 @@ import { useCartStore } from '../../store/cart'
 type DiscountState = {
   code: string
   discount: number
-  source: 'auto' | 'manual'
 }
 
 const TAX_RATE = 0.05
@@ -23,8 +22,8 @@ export default function CartPage() {
   const setCouponCode = useCartStore((state) => state.setCouponCode)
 
   const [couponInput, setCouponInput] = useState(storedCouponCode || '')
-  const [manualDiscount, setManualDiscount] = useState<DiscountState | null>(null)
-  const [autoDiscount, setAutoDiscount] = useState<DiscountState | null>(null)
+  const [appliedDiscount, setAppliedDiscount] = useState<DiscountState | null>(null)
+  const [bestCoupons, setBestCoupons] = useState<DiscountState[]>([])
   const [couponMsg, setCouponMsg] = useState('')
   const [loadingBestDiscount, setLoadingBestDiscount] = useState(false)
 
@@ -32,26 +31,14 @@ export default function CartPage() {
     () => items.reduce((sum, item) => sum + item.price * item.qty, 0),
     [items]
   )
-  const totalItemCount = useMemo(
-    () => items.reduce((sum, item) => sum + item.qty, 0),
-    [items]
-  )
-
-  const effectiveDiscount =
-    manualDiscount && autoDiscount
-      ? manualDiscount.discount >= autoDiscount.discount
-        ? manualDiscount
-        : autoDiscount
-      : manualDiscount || autoDiscount
-
-  const discountAmount = effectiveDiscount?.discount || 0
+  const discountAmount = appliedDiscount?.discount || 0
   const taxableAmount = Math.max(0, subtotal - discountAmount)
   const tax = Math.round(taxableAmount * TAX_RATE)
   const total = taxableAmount + tax
 
   useEffect(() => {
     if (!subtotal) {
-      setAutoDiscount(null)
+      setBestCoupons([])
       return
     }
 
@@ -69,17 +56,33 @@ export default function CartPage() {
         })
         const payload = await response.json()
         if (cancelled) return
-        if (payload.best?.coupon) {
-          setAutoDiscount({
-            code: payload.best.coupon.code,
-            discount: Number(payload.best.discount || 0),
-            source: 'auto',
-          })
-        } else {
-          setAutoDiscount(null)
+        const fromSuggestions = Array.isArray(payload?.suggestions)
+          ? payload.suggestions
+              .map((row: any) => ({
+                code: String(row?.coupon?.code || '').toUpperCase(),
+                discount: Number(row?.discount || 0),
+              }))
+              .filter((row: DiscountState) => Boolean(row.code) && row.discount > 0)
+          : []
+
+        if (fromSuggestions.length > 0) {
+          setBestCoupons(fromSuggestions.slice(0, 3))
+          return
         }
+
+        if (payload.best?.coupon?.code) {
+          setBestCoupons([
+            {
+              code: String(payload.best.coupon.code).toUpperCase(),
+              discount: Number(payload.best.discount || 0),
+            },
+          ])
+          return
+        }
+
+        setBestCoupons([])
       } catch {
-        if (!cancelled) setAutoDiscount(null)
+        if (!cancelled) setBestCoupons([])
       } finally {
         if (!cancelled) setLoadingBestDiscount(false)
       }
@@ -92,34 +95,37 @@ export default function CartPage() {
   }, [subtotal, user?.id])
 
   useEffect(() => {
-    setCouponCode(effectiveDiscount?.code || '')
-  }, [effectiveDiscount?.code, setCouponCode])
+    setCouponCode(appliedDiscount?.code || '')
+  }, [appliedDiscount?.code, setCouponCode])
 
-  async function applyCoupon() {
-    if (!couponInput.trim()) return
+  async function applyCoupon(explicitCode?: string) {
+    const code = String(explicitCode || couponInput || '')
+      .trim()
+      .toUpperCase()
+    if (!code) return
 
     try {
       const response = await fetch('/api/coupons/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          code: couponInput.trim().toUpperCase(),
+          code,
           subtotal,
           customerClerkId: user?.id,
         }),
       })
       const payload = await response.json()
       if (!response.ok || !payload.valid || !payload.coupon) {
-        setManualDiscount(null)
+        setAppliedDiscount(null)
         setCouponMsg(payload.reason || 'Invalid coupon')
         return
       }
 
-      setManualDiscount({
+      setAppliedDiscount({
         code: payload.coupon.code,
         discount: Number(payload.discount?.discount || 0),
-        source: 'manual',
       })
+      setCouponInput(String(payload.coupon.code || '').toUpperCase())
       setCouponMsg(
         `${payload.coupon.code} applied. You saved ₹${payload.discount?.discount || 0}`
       )
@@ -128,8 +134,13 @@ export default function CartPage() {
     }
   }
 
+  function applySuggestedCoupon(code: string) {
+    setCouponInput(code)
+    applyCoupon(code).catch(() => { })
+  }
+
   function clearCoupon() {
-    setManualDiscount(null)
+    setAppliedDiscount(null)
     setCouponInput('')
     setCouponMsg('')
   }
@@ -250,33 +261,52 @@ export default function CartPage() {
                 className="flex-1 rounded-lg border border-white/10 bg-[#222] px-3 py-2 text-sm text-white placeholder:text-gray-600"
               />
               <button
-                onClick={applyCoupon}
+                onClick={() => {
+                  applyCoupon().catch(() => { })
+                }}
                 className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-black transition-colors hover:bg-gray-200"
               >
                 Apply
               </button>
             </div>
-            {manualDiscount && (
+            {appliedDiscount && (
               <button
                 onClick={clearCoupon}
                 className="text-xs text-gray-500 underline underline-offset-4 hover:text-white"
               >
-                Remove manual coupon
+                Remove applied coupon
               </button>
             )}
             {couponMsg && (
               <p
-                className={`text-xs ${manualDiscount ? 'text-green-400' : 'text-red-400'
+                className={`text-xs ${appliedDiscount ? 'text-green-400' : 'text-red-400'
                   }`}
               >
                 {couponMsg}
               </p>
             )}
-            {autoDiscount && (
-              <p className="text-xs text-emerald-300">
-                {loadingBestDiscount
-                  ? 'Finding best discount...'
-                  : `Best available: ${autoDiscount.code} (₹${autoDiscount.discount} off)`}
+            {loadingBestDiscount ? (
+              <p className="text-xs text-emerald-300">Finding best coupons...</p>
+            ) : bestCoupons.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-xs text-emerald-300">Best coupons for you</p>
+                <div className="flex flex-wrap gap-2">
+                  {bestCoupons.map((coupon) => (
+                    <button
+                      key={coupon.code}
+                      type="button"
+                      onClick={() => applySuggestedCoupon(coupon.code)}
+                      className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-200 transition-colors hover:bg-emerald-500/20"
+                    >
+                      {coupon.code} (₹{coupon.discount} off)
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {!appliedDiscount && bestCoupons.length > 0 && (
+              <p className="text-xs text-gray-500">
+                Coupon is optional. Tap any best coupon above to apply.
               </p>
             )}
           </div>
@@ -292,7 +322,7 @@ export default function CartPage() {
             {discountAmount > 0 && (
               <div className="flex justify-between text-green-400">
                 <span>
-                  Discount {effectiveDiscount ? `(${effectiveDiscount.code})` : ''}
+                  Discount {appliedDiscount ? `(${appliedDiscount.code})` : ''}
                 </span>
                 <span>−₹{discountAmount}</span>
               </div>

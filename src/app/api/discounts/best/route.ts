@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server'
 import {
   bestCouponForCart,
+  computeDiscount,
   fetchActiveCoupons,
   isFirstOrderCustomer,
+  validateCoupon,
 } from '../../../../lib/discounts'
 import { CouponRecord } from '../../../../lib/types'
 
@@ -35,9 +37,40 @@ export async function POST(req: Request) {
         ]
     const firstOrder = hasSupabase ? await isFirstOrderCustomer(customerClerkId, undefined) : true
     const best = bestCouponForCart(numericSubtotal, coupons || [], firstOrder)
+    const suggestionsRaw = (coupons || []).map((coupon) => {
+        const validation = validateCoupon(coupon, {
+          subtotal: numericSubtotal,
+          isFirstOrder: firstOrder,
+        })
+        if (!validation.valid) return null
+        const discount = computeDiscount(numericSubtotal, coupon)
+        if (discount.discount <= 0) return null
+        return {
+          coupon,
+          discount: discount.discount,
+          total: discount.total,
+        }
+      })
+    const suggestions = suggestionsRaw
+      .filter(
+        (
+          row
+        ): row is {
+          coupon: CouponRecord
+          discount: number
+          total: number
+        } => Boolean(row)
+      )
+      .sort((a, b) => {
+        const byDiscount = b.discount - a.discount
+        if (byDiscount !== 0) return byDiscount
+        return a.total - b.total
+      })
+      .slice(0, 3)
 
     return NextResponse.json({
       best,
+      suggestions,
       isFirstOrder: firstOrder,
     })
   } catch (e: any) {
