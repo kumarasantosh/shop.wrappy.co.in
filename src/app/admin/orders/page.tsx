@@ -60,12 +60,14 @@ function OrderCard({
   onReject,
   onReady,
   onComplete,
+  isUpdating = false,
 }: {
   order: OrderRecord
   onAccept: (id: string) => void
   onReject: (id: string) => void
   onReady: (id: string) => void
   onComplete: (id: string) => void
+  isUpdating?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
   const [verifyCode, setVerifyCode] = useState('')
@@ -78,7 +80,7 @@ function OrderCard({
   const isAccepted = order.status === 'preparing'
   const isReady = order.status === 'out_for_delivery'
   const timer = useAcceptTimer(order.created_at)
-  const isPickup = meta.orderType === 'pickup'
+  const actionsDisabled = Boolean(isUpdating)
 
   return (
     <motion.div
@@ -237,7 +239,8 @@ function OrderCard({
             <button
               type="button"
               onClick={() => onAccept(order.id)}
-              className="relative flex-1 overflow-hidden rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-500/20 transition-all hover:bg-emerald-500 active:scale-[0.97]"
+              disabled={actionsDisabled}
+              className="relative flex-1 overflow-hidden rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-500/20 transition-all hover:bg-emerald-500 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {/* Progress bar background */}
               <div
@@ -245,13 +248,14 @@ function OrderCard({
                 style={{ width: `${timer.percent}%` }}
               />
               <span className="relative z-10">
-                Accept · {timer.label}
+                {actionsDisabled ? 'Updating...' : `Accept · ${timer.label}`}
               </span>
             </button>
             <button
               type="button"
               onClick={() => onReject(order.id)}
-              className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm font-medium text-red-400 transition-all hover:bg-red-500/20 active:scale-[0.97]"
+              disabled={actionsDisabled}
+              className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm font-medium text-red-400 transition-all hover:bg-red-500/20 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
             >
               Reject
             </button>
@@ -261,18 +265,20 @@ function OrderCard({
           <button
             type="button"
             onClick={() => onReady(order.id)}
-            className="flex-1 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-black shadow-lg shadow-amber-500/20 transition-all hover:bg-amber-400 hover:shadow-amber-500/30 active:scale-[0.97]"
+            disabled={actionsDisabled}
+            className="flex-1 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-black shadow-lg shadow-amber-500/20 transition-all hover:bg-amber-400 hover:shadow-amber-500/30 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Mark Ready
+            {actionsDisabled ? 'Updating...' : 'Mark Ready'}
           </button>
         )}
         {isReady && (
           <button
             type="button"
             onClick={() => onComplete(order.id)}
-            className="flex-1 rounded-xl bg-green-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-green-500/20 transition-all hover:bg-green-400 hover:shadow-green-500/30 active:scale-[0.97]"
+            disabled={actionsDisabled}
+            className="flex-1 rounded-xl bg-green-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-green-500/20 transition-all hover:bg-green-400 hover:shadow-green-500/30 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Complete
+            {actionsDisabled ? 'Updating...' : 'Complete'}
           </button>
         )}
       </div>
@@ -310,6 +316,9 @@ function SectionHeader({
 /* ─── Main Page ─── */
 export default function AdminOrdersPage() {
   const [orders, setOrders] = useState<OrderRecord[]>([])
+  const [pendingStatusByOrderId, setPendingStatusByOrderId] = useState<
+    Record<string, OrderRecord['status']>
+  >({})
   const [bannerText, setBannerText] = useState('')
   const [soundUnlocked, setSoundUnlocked] = useState(false)
   const [showPreviousOrders, setShowPreviousOrders] = useState(false)
@@ -320,7 +329,28 @@ export default function AdminOrdersPage() {
   const hasInitialOrderLoadRef = useRef(false)
   const bannerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const ordersRef = useRef<OrderRecord[]>([])
+  const pendingStatusByOrderIdRef = useRef<Record<string, OrderRecord['status']>>({})
   ordersRef.current = orders
+
+  const setPendingOrderStatus = useCallback(
+    (orderId: string, status: OrderRecord['status'] | null) => {
+      setPendingStatusByOrderId((prev) => {
+        if (!status) {
+          if (!prev[orderId]) return prev
+          const next = { ...prev }
+          delete next[orderId]
+          pendingStatusByOrderIdRef.current = next
+          return next
+        }
+
+        if (prev[orderId] === status) return prev
+        const next = { ...prev, [orderId]: status }
+        pendingStatusByOrderIdRef.current = next
+        return next
+      })
+    },
+    []
+  )
 
   /* ── Sound helpers ── */
   function stopAlertSound() {
@@ -405,7 +435,39 @@ export default function AdminOrdersPage() {
     const response = await fetch('/api/admin/orders', { cache: 'no-store' })
     if (!response.ok) throw new Error('Unable to fetch orders')
     const payload = await response.json()
-    const nextOrders = (payload.orders || []) as OrderRecord[]
+    const nextOrdersFromServer = (payload.orders || []) as OrderRecord[]
+    const pendingMap = pendingStatusByOrderIdRef.current
+    const confirmedPendingIds: string[] = []
+
+    const nextOrders = nextOrdersFromServer.map((order) => {
+      const pendingStatus = pendingMap[order.id]
+      if (!pendingStatus) return order
+
+      if (order.status === pendingStatus) {
+        confirmedPendingIds.push(order.id)
+        return order
+      }
+
+      // Keep optimistic state until backend catches up to avoid UI flicker/revert.
+      return { ...order, status: pendingStatus }
+    })
+
+    if (confirmedPendingIds.length > 0) {
+      setPendingStatusByOrderId((prev) => {
+        let changed = false
+        const next = { ...prev }
+        for (const orderId of confirmedPendingIds) {
+          if (next[orderId]) {
+            delete next[orderId]
+            changed = true
+          }
+        }
+        if (!changed) return prev
+        pendingStatusByOrderIdRef.current = next
+        return next
+      })
+    }
+
     setOrders(nextOrders)
     syncSoundWithOrders(nextOrders)
 
@@ -485,18 +547,34 @@ export default function AdminOrdersPage() {
   }, [])
 
   /* ── Status actions ── */
-  async function updateStatus(id: string, status: string) {
+  async function updateStatus(id: string, status: OrderRecord['status']) {
+    if (pendingStatusByOrderIdRef.current[id]) return
+
+    setPendingOrderStatus(id, status)
+
     // Optimistic update
     setOrders((prev) => {
       const next = prev.map((o) => (o.id === id ? { ...o, status: status as OrderRecord['status'] } : o))
       syncSoundWithOrders(next)
       return next
     })
-    await fetch('/api/admin/orders/update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, status }),
-    })
+
+    try {
+      const response = await fetch('/api/admin/orders/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Status update failed')
+      }
+    } catch {
+      setPendingOrderStatus(id, null)
+      fetchOrders().catch(() => { })
+      return
+    }
+
     fetchOrders().catch(() => { })
   }
 
@@ -607,6 +685,7 @@ export default function AdminOrdersPage() {
                       onReject={rejectOrder}
                       onReady={markReady}
                       onComplete={completeOrder}
+                      isUpdating={Boolean(pendingStatusByOrderId[order.id])}
                     />
                   ))}
                 </AnimatePresence>
@@ -633,6 +712,7 @@ export default function AdminOrdersPage() {
                       onReject={rejectOrder}
                       onReady={markReady}
                       onComplete={completeOrder}
+                      isUpdating={Boolean(pendingStatusByOrderId[order.id])}
                     />
                   ))}
                 </AnimatePresence>
@@ -659,6 +739,7 @@ export default function AdminOrdersPage() {
                       onReject={rejectOrder}
                       onReady={markReady}
                       onComplete={completeOrder}
+                      isUpdating={Boolean(pendingStatusByOrderId[order.id])}
                     />
                   ))}
                 </AnimatePresence>
