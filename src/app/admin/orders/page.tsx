@@ -334,20 +334,20 @@ export default function AdminOrdersPage() {
 
   const setPendingOrderStatus = useCallback(
     (orderId: string, status: OrderRecord['status'] | null) => {
-      setPendingStatusByOrderId((prev) => {
-        if (!status) {
-          if (!prev[orderId]) return prev
-          const next = { ...prev }
-          delete next[orderId]
-          pendingStatusByOrderIdRef.current = next
-          return next
-        }
-
-        if (prev[orderId] === status) return prev
-        const next = { ...prev, [orderId]: status }
+      const prev = pendingStatusByOrderIdRef.current
+      if (!status) {
+        if (!prev[orderId]) return
+        const next = { ...prev }
+        delete next[orderId]
         pendingStatusByOrderIdRef.current = next
-        return next
-      })
+        setPendingStatusByOrderId(next)
+        return
+      }
+
+      if (prev[orderId] === status) return
+      const next = { ...prev, [orderId]: status }
+      pendingStatusByOrderIdRef.current = next
+      setPendingStatusByOrderId(next)
     },
     []
   )
@@ -471,12 +471,15 @@ export default function AdminOrdersPage() {
     setOrders(nextOrders)
     syncSoundWithOrders(nextOrders)
 
-    const nextIds = new Set(
-      nextOrders.map((o) => o.id).filter((id): id is string => Boolean(id))
+    const nextPlacedIds = new Set(
+      nextOrders
+        .filter((o) => o.status === 'placed')
+        .map((o) => o.id)
+        .filter((id): id is string => Boolean(id))
     )
 
     if (options?.initial || !hasInitialOrderLoadRef.current) {
-      seenOrderIdsRef.current = nextIds
+      seenOrderIdsRef.current = nextPlacedIds
       hasInitialOrderLoadRef.current = true
       // Play sound if there are already-placed orders on initial load
       if (nextOrders.some((o) => o.status === 'placed')) {
@@ -486,10 +489,10 @@ export default function AdminOrdersPage() {
     }
 
     let newCount = 0
-    for (const id of nextIds) {
+    for (const id of nextPlacedIds) {
       if (!seenOrderIdsRef.current.has(id)) newCount += 1
     }
-    seenOrderIdsRef.current = nextIds
+    seenOrderIdsRef.current = nextPlacedIds
     if (newCount > 0) notifyNewOrders(newCount)
   }
 
