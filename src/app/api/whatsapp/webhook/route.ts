@@ -44,11 +44,10 @@ export async function GET(req: NextRequest) {
 
 // ─── POST — Inbound message handler ──────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  // Always respond 200 immediately — Meta retries if you're slow
   const body = await req.json().catch(() => ({}))
 
-  // Process asynchronously after responding
-  void handleInbound(body)
+  // Await so Vercel doesn't terminate the function before the work completes
+  await handleInbound(body)
 
   return NextResponse.json({ status: 'ok' }, { status: 200 })
 }
