@@ -368,7 +368,7 @@ export async function notifyAdminsNewOrder(
 // These are called by the WhatsApp webhook state machine.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const GRAPH_URL = `https://graph.facebook.com/v${GRAPH_API_VERSION}`
+const GRAPH_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`
 
 /** Low-level helper: send any approved template with arbitrary components */
 async function sendTemplate(
