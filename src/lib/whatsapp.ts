@@ -403,7 +403,7 @@ async function sendTemplate(
 
 /** T1 — welcome_greeting: sent when customer says Hi */
 export async function sendWelcomeGreeting(phone: string, name: string): Promise<void> {
-  return sendTemplate(phone, 'welcome_greeting', [
+  return sendTemplate(phone, 'wrappy_welcome', [
     {
       type: 'body',
       parameters: [
@@ -420,18 +420,15 @@ export async function sendWelcomeGreeting(phone: string, name: string): Promise<
   ])
 }
 
-/** T2 — restaurant_menu: sent when customer requests menu */
+/** T2 — restaurant_menu: both {{header_text}} and {{menu_body}} are in the body */
 export async function sendMenu(phone: string, menuText: string): Promise<void> {
   return sendTemplate(phone, 'restaurant_menu', [
     {
-      type: 'header',
+      type: 'body',
       parameters: [
         { type: 'text', text: `Our Menu — ${process.env.RESTAURANT_NAME || 'Wrappy'}` },
+        { type: 'text', text: menuText },
       ],
-    },
-    {
-      type: 'body',
-      parameters: [{ type: 'text', text: menuText }],
     },
   ])
 }
@@ -453,18 +450,12 @@ export async function sendItemSelected(
   ])
 }
 
-/** T4 — request_delivery_address: sent after customer selects quantity */
+/** T4 — request_delivery_address: only {{customer_name}} in body, no button */
 export async function sendAddressRequest(phone: string, name: string): Promise<void> {
   return sendTemplate(phone, 'request_delivery_address', [
     {
       type: 'body',
       parameters: [{ type: 'text', text: name || 'there' }],
-    },
-    {
-      type: 'button',
-      sub_type: 'quick_reply',
-      index: '0',
-      parameters: [{ type: 'payload', payload: 'SHARE_LOCATION' }],
     },
   ])
 }
@@ -547,7 +538,7 @@ export async function sendOrderConfirmed(
   }
 ): Promise<void> {
   const trackingUrl = `${process.env.NEXT_PUBLIC_APP_URL || ''}/track/${session.order_id}`
-  return sendTemplate(phone, 'order_payment_confirmed', [
+  return sendTemplate(phone, 'customer_order_confirmed', [
     {
       type: 'body',
       parameters: [
