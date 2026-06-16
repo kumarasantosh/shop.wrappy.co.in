@@ -6,6 +6,8 @@ import {
 } from '../../../../lib/razorpay'
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin'
 import { ProductAddon } from '../../../../lib/types'
+import { notifyAdminsNewOrder } from '../../../../lib/whatsapp'
+import { sendAdminPush, PushPayload } from '../../../../lib/webPush'
 
 const KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || ''
 const CHECKOUT_DRAFT_SECRET = process.env.CHECKOUT_DRAFT_SECRET || KEY_SECRET
@@ -195,6 +197,22 @@ export async function POST(req: Request) {
       if (itemsError) {
         return NextResponse.json({ error: itemsError.message }, { status: 500 })
       }
+    }
+
+    // Fire-and-forget background alerts so admins are notified of the new order
+    // even when no browser tab is open. Never blocks the order response.
+    {
+      const shortId = String(order.id).slice(0, 8)
+      const totalLabel = `₹${Math.round(Number(order.total || 0))}`
+      const orderTypeLabel = draft.order_type === 'pickup' ? 'Self Pickup' : 'Delivery'
+      const pushPayload: PushPayload = {
+        title: '🛎️ New order received',
+        body: `#${shortId} · ${totalLabel} · ${orderTypeLabel}`,
+        url: '/admin/orders',
+        tag: `order-${shortId}`,
+      }
+      sendAdminPush(pushPayload).catch(() => { })
+      notifyAdminsNewOrder(order.id).catch(() => { })
     }
 
     if (draft.coupon_id) {

@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useSession } from '@clerk/nextjs'
+import PushAlertsButton from '../../../components/admin/PushAlertsButton'
 import { parseOrderMeta, stripOrderMeta } from '../../../lib/orderMeta'
 import { useClerkSupabaseClient } from '../../../lib/supabase'
 import { OrderItemRecord, OrderRecord } from '../../../lib/types'
@@ -628,32 +629,12 @@ export default function AdminOrdersPage() {
   }, [])
 
   /* ── Realtime socket subscription (authenticated, no polling) ── */
+  const hasSession = Boolean(session)
   useEffect(() => {
-    console.log('[orders-realtime] effect run — sessionLoaded:', isSessionLoaded, 'hasSession:', Boolean(session))
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
-      console.warn('[orders-realtime] NEXT_PUBLIC_SUPABASE_URL is not set')
-      return
-    }
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return
     // Wait for the Clerk session so the socket connects with the admin's
     // identity; RLS only streams `orders` to an authenticated admin.
-    if (!isSessionLoaded || !session) {
-      console.log('[orders-realtime] waiting for Clerk session…')
-      return
-    }
-
-    // Diagnostic: confirm we actually get a token and inspect its claims.
-    session.getToken().then((t) => {
-      if (!t) {
-        console.warn('[orders-realtime] Clerk getToken() returned null')
-        return
-      }
-      try {
-        const claims = JSON.parse(atob(t.split('.')[1]))
-        console.log('[orders-realtime] token claims:', { role: claims.role, user_role: claims.user_role, sub: claims.sub })
-      } catch {
-        console.log('[orders-realtime] got token (could not decode claims)')
-      }
-    }).catch((e) => console.warn('[orders-realtime] getToken error', e))
+    if (!isSessionLoaded || !hasSession) return
 
     const channel = supabase
       .channel('admin-orders-realtime')
@@ -661,14 +642,12 @@ export default function AdminOrdersPage() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'orders' },
         (payload) => {
-          console.log('[orders-realtime] event received:', payload.eventType)
           handleRealtimeEvent(
             payload as unknown as Parameters<typeof handleRealtimeEvent>[0]
           ).catch(() => { })
         }
       )
-      .subscribe((status, err) => {
-        console.log('[orders-realtime] channel status:', status, err || '')
+      .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setLiveStatus('live')
           // Fires on first connect and again whenever the socket re-subscribes
@@ -683,11 +662,50 @@ export default function AdminOrdersPage() {
         }
       })
 
+    // ── "Always-on" watchdog ───────────────────────────────────
+    // Kitchen tablets sleep, wifi drops, and the tab gets backgrounded
+    // (which throttles timers and can silently kill the socket). When the
+    // page wakes / regains network / refocuses, force the socket + channel
+    // back up and resync so the feed is never stale. Also a lightweight
+    // periodic liveness check as a final safety net.
+    const ensureLive = (resync = false) => {
+      const socketDown = !supabase.realtime.isConnected()
+      const channelDown = channel.state !== 'joined' && channel.state !== 'joining'
+      if (socketDown) supabase.realtime.connect()
+      if (channelDown) {
+        setLiveStatus('reconnecting')
+        channel.subscribe() // rejoin the existing channel
+      }
+      // Resync ONLY on an explicit wake/online/focus event, or when we just had
+      // to recover a dead connection. A healthy socket triggers no fetch — so
+      // the periodic check below never degrades into polling.
+      if ((resync || socketDown || channelDown) && hasInitialOrderLoadRef.current) {
+        fetchOrders().catch(() => { })
+      }
+    }
+
+    const wake = () => ensureLive(true) // event-driven catch-up
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') wake()
+    }
+    window.addEventListener('online', wake)
+    window.addEventListener('focus', wake)
+    document.addEventListener('visibilitychange', onVisible)
+    // Liveness watchdog: only reconnects if the socket/channel is actually
+    // down; does nothing (no fetch) while healthy.
+    const liveness = window.setInterval(() => {
+      if (document.visibilityState === 'visible') ensureLive(false)
+    }, 20000)
+
     return () => {
+      window.removeEventListener('online', wake)
+      window.removeEventListener('focus', wake)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.clearInterval(liveness)
       supabase.removeChannel(channel)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase, isSessionLoaded, session])
+  }, [supabase, isSessionLoaded, hasSession])
 
   /* ── Status actions ── */
   async function updateStatus(id: string, status: OrderRecord['status']) {
@@ -786,17 +804,20 @@ export default function AdminOrdersPage() {
             {activeCount} active · {completedOrders.length} completed today
           </p>
         </div>
-        {newOrders.length > 0 && (
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-3 w-3">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
-              <span className="relative inline-flex h-3 w-3 rounded-full bg-red-500" />
-            </span>
-            <span className="text-xs font-medium text-red-400">
-              {newOrders.length} new
-            </span>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          <PushAlertsButton />
+          {newOrders.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-3 w-3">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+                <span className="relative inline-flex h-3 w-3 rounded-full bg-red-500" />
+              </span>
+              <span className="text-xs font-medium text-red-400">
+                {newOrders.length} new
+              </span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Enable Sound button — shown when sound is blocked and there are new orders */}

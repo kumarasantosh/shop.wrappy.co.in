@@ -1,5 +1,5 @@
 'use client'
-import React, { useMemo } from 'react'
+import React, { useRef } from 'react'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { useSession } from '@clerk/nextjs'
 
@@ -31,15 +31,22 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 export function useClerkSupabaseClient(): SupabaseClient {
   const { session } = useSession()
 
-  return useMemo(
-    () =>
-      createClient(supabaseUrl, supabaseAnonKey, {
-        async accessToken() {
-          return (await session?.getToken()) ?? null
-        },
-      }),
-    [session]
-  )
+  // Keep the latest Clerk session in a ref so the accessToken callback always
+  // reads a fresh token WITHOUT recreating the client. The client is created
+  // exactly once and stays stable for the lifetime of the component — so the
+  // Realtime socket is never torn down just because Clerk rotated the session.
+  const sessionRef = useRef(session)
+  sessionRef.current = session
+
+  const clientRef = useRef<SupabaseClient | null>(null)
+  if (!clientRef.current) {
+    clientRef.current = createClient(supabaseUrl, supabaseAnonKey, {
+      async accessToken() {
+        return (await sessionRef.current?.getToken()) ?? null
+      },
+    })
+  }
+  return clientRef.current
 }
 
 export function SupabaseProvider({ children }: { children: React.ReactNode }) {

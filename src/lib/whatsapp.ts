@@ -7,6 +7,8 @@ const GRAPH_API_VERSION = 'v25.0'
 const ADMIN_ALERT_TEMPLATE_NAME = process.env.WHATSAPP_ADMIN_ALERT_TEMPLATE || 'hello_world'
 const ADMIN_UNACCEPTED_TEMPLATE_NAME =
     process.env.WHATSAPP_ADMIN_UNACCEPTED_TEMPLATE || ADMIN_ALERT_TEMPLATE_NAME
+const ADMIN_NEW_ORDER_TEMPLATE_NAME =
+    process.env.WHATSAPP_ADMIN_NEW_ORDER_TEMPLATE || ADMIN_UNACCEPTED_TEMPLATE_NAME
 const ADMIN_ALERT_TEMPLATE_LANGUAGE =
     process.env.WHATSAPP_ADMIN_ALERT_TEMPLATE_LANGUAGE || 'en_US'
 
@@ -305,5 +307,58 @@ export async function notifyAdminsPickupPendingOrder(
         pickupSlotLabel,
         shortId,
     })
+    return { sent, failed }
+}
+
+/**
+ * Notify all active admin phones that a NEW order has just been placed.
+ * Fired the moment an order is confirmed, independent of any open browser tab.
+ */
+export async function notifyAdminsNewOrder(
+    orderId: string
+): Promise<{ sent: number; failed: number }> {
+    console.log('[WhatsApp] notifyAdminsNewOrder start', { orderId })
+    const { data: order } = await supabaseAdmin
+        .from('orders')
+        .select('id, total, phone, instructions')
+        .eq('id', orderId)
+        .single()
+
+    const shortId = orderId.slice(0, 8)
+    const totalLabel = Number.isFinite(Number(order?.total))
+        ? `INR ${Math.round(Number(order?.total || 0))}`
+        : 'N/A'
+    const customerPhone = String(order?.phone || 'N/A')
+    const meta = parseOrderMeta(order?.instructions)
+    const orderTypeLabel = meta.orderType === 'pickup' ? 'Self Pickup' : 'Delivery'
+
+    const phones = await getActiveAdminPhones()
+    let sent = 0
+    let failed = 0
+
+    for (const phone of phones) {
+        const result = await sendTemplateWithFallbacks(
+            phone,
+            ADMIN_NEW_ORDER_TEMPLATE_NAME,
+            ADMIN_ALERT_TEMPLATE_LANGUAGE,
+            [
+                [shortId, totalLabel, 'just now', customerPhone, orderTypeLabel],
+                [shortId, totalLabel, 'just now'],
+                [shortId],
+                [],
+            ]
+        )
+        if (result.success) {
+            sent++
+        } else {
+            failed++
+            console.error(
+                `[WhatsApp] Failed new-order alert to ${phone} for order ${orderId}:`,
+                result.error
+            )
+        }
+    }
+
+    console.log('[WhatsApp] notifyAdminsNewOrder complete', { orderId, sent, failed })
     return { sent, failed }
 }

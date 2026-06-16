@@ -232,3 +232,20 @@ create policy "orders owner read"
   on orders for select
   to authenticated
   using ( customer_clerk_id = (auth.jwt() ->> 'sub') );
+
+-- ─── Web Push subscriptions ─────────────────────────────────
+-- Stores admin browser push subscriptions so the server can send
+-- new-order notifications even when no tab is open. Written/read only
+-- via the service-role key from API routes, so RLS is left disabled.
+create table if not exists push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  clerk_user_id text not null,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  user_agent text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+create index if not exists idx_push_subscriptions_clerk_user_id
+  on push_subscriptions (clerk_user_id);

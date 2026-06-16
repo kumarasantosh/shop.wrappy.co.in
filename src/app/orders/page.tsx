@@ -39,12 +39,13 @@ export default function OrdersPage() {
     loadOrders().catch(() => setLoading(false))
   }, [])
 
+  const hasSession = Boolean(session)
   useEffect(() => {
     if (!user?.id) return
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return
     // Wait for the Clerk session so the socket is authenticated; RLS only
     // streams a customer their own orders (customer_clerk_id = auth sub).
-    if (!isSessionLoaded || !session) return
+    if (!isSessionLoaded || !hasSession) return
 
     const channel = supabase
       .channel(`orders-realtime-${user.id}`)
@@ -66,7 +67,7 @@ export default function OrdersPage() {
       supabase.removeChannel(channel)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, supabase, isSessionLoaded, session])
+  }, [user?.id, supabase, isSessionLoaded, hasSession])
 
   const activeOrderCount = useMemo(
     () =>
