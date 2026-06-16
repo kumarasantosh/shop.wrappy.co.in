@@ -402,21 +402,8 @@ async function sendTemplate(
 
 /** T1 — welcome_greeting: sent when customer says Hi */
 export async function sendWelcomeGreeting(phone: string, name: string): Promise<void> {
-  return sendTemplate(phone, 'welcome_greeting', [
-    {
-      type: 'body',
-      parameters: [
-        { type: 'text', text: name || 'there' },
-        { type: 'text', text: process.env.RESTAURANT_NAME || 'our restaurant' },
-      ],
-    },
-    {
-      type: 'button',
-      sub_type: 'quick_reply',
-      index: '0',
-      parameters: [{ type: 'payload', payload: 'VIEW_MENU' }],
-    },
-  ])
+  // TODO: replace 'hello_world' with 'welcome_greeting' once that template is approved in Meta
+  return sendTemplate(phone, 'hello_world', [])
 }
 
 /** T2 — restaurant_menu: sent when customer requests menu */
