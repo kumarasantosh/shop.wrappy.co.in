@@ -252,6 +252,9 @@ export default function CheckoutPage() {
     longitude: number
   } | null>(null)
   const [resolvingDistance, setResolvingDistance] = useState(false)
+  const [deliveryFee, setDeliveryFee] = useState(0)
+  const [quotingDelivery, setQuotingDelivery] = useState(false)
+  const [deliveryQuoteFailed, setDeliveryQuoteFailed] = useState(false)
 
   const subtotal = useMemo(
     () => items.reduce((sum, item) => sum + item.price * item.qty, 0),
@@ -265,7 +268,6 @@ export default function CheckoutPage() {
   const tax = Math.round(taxableAmount * TAX_RATE)
   const shouldChargePacking = orderType === 'delivery' || includePickupPacking
   const packingFee = shouldChargePacking ? totalItemCount * PACKING_FEE_PER_ITEM : 0
-  const deliveryFee = 0
   const total = taxableAmount + tax + packingFee + deliveryFee
   const [pickupMinDatetime, setPickupMinDatetime] = useState(() =>
     toLocalDatetimeString(new Date(Date.now() + 30 * 60_000))
@@ -449,6 +451,78 @@ export default function CheckoutPage() {
       cancelled = true
     }
   }, [selectedAddress, user?.id, orderType])
+
+  // Fetch a live Uber Direct delivery fee whenever we have a valid, in-range
+  // delivery address. Display-only: the fee is re-quoted authoritatively on
+  // the server at order creation.
+  useEffect(() => {
+    let cancelled = false
+
+    if (
+      orderType !== 'delivery' ||
+      !selectedAddress ||
+      !effectiveCoordinates ||
+      isOutsideDeliveryRange ||
+      resolvingDistance
+    ) {
+      setDeliveryFee(0)
+      setQuotingDelivery(false)
+      setDeliveryQuoteFailed(false)
+      return
+    }
+
+    const address = formatAddressForDisplay(selectedAddress)
+    if (!address) {
+      setDeliveryFee(0)
+      return
+    }
+
+    setQuotingDelivery(true)
+    setDeliveryQuoteFailed(false)
+
+    fetch('/api/uber/quote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        address,
+        latitude: effectiveCoordinates.latitude,
+        longitude: effectiveCoordinates.longitude,
+        phone: phone.trim() || undefined,
+        subtotal: taxableAmount,
+      }),
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}))
+        if (cancelled) return
+        if (res.ok && Number.isFinite(Number(data.fee))) {
+          setDeliveryFee(Math.max(0, Math.round(Number(data.fee))))
+        } else {
+          setDeliveryFee(0)
+          setDeliveryQuoteFailed(true)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDeliveryFee(0)
+          setDeliveryQuoteFailed(true)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setQuotingDelivery(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    orderType,
+    selectedAddress,
+    effectiveCoordinates,
+    isOutsideDeliveryRange,
+    resolvingDistance,
+    taxableAmount,
+    phone,
+  ])
 
   async function loadAddresses() {
     if (!isLoaded) return
@@ -1041,17 +1115,19 @@ export default function CheckoutPage() {
           <div>
             <label className="mb-2 block text-sm text-gray-500">Order Type</label>
             <div className="grid grid-cols-2 gap-3">
-              <div
-                className="relative overflow-hidden rounded-xl border border-white/10 bg-[#222] px-4 py-4 opacity-50 cursor-not-allowed"
+              <button
+                type="button"
+                onClick={() => setOrderType('delivery')}
+                className={`rounded-xl border px-4 py-4 transition-all ${orderType === 'delivery'
+                  ? 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
+                  : 'border-white/10 bg-[#222]'
+                  }`}
               >
-                <div className="absolute -right-7 top-2 rotate-45 bg-gray-600 px-8 py-0.5 text-[9px] font-bold uppercase tracking-wider text-gray-300">
-                  Soon
-                </div>
                 <div className="flex flex-col items-center gap-1.5">
-                  <span className="text-2xl grayscale">🚚</span>
-                  <span className="text-sm font-medium text-gray-500">Delivery</span>
+                  <span className="text-2xl">🚚</span>
+                  <span className={`text-sm font-medium ${orderType === 'delivery' ? 'text-emerald-300' : 'text-white'}`}>Delivery</span>
                 </div>
-              </div>
+              </button>
               <button
                 type="button"
                 onClick={() => setOrderType('pickup')}
@@ -1560,6 +1636,20 @@ export default function CheckoutPage() {
                   Packing (₹{PACKING_FEE_PER_ITEM} × {totalItemCount})
                 </span>
                 <span>₹{packingFee}</span>
+              </div>
+            )}
+            {orderType === 'delivery' && (
+              <div className="flex justify-between">
+                <span className="text-gray-400">Delivery fee</span>
+                <span>
+                  {quotingDelivery
+                    ? 'Calculating…'
+                    : deliveryQuoteFailed
+                      ? 'At dispatch'
+                      : deliveryFee > 0
+                        ? `₹${deliveryFee}`
+                        : 'Free'}
+                </span>
               </div>
             )}
             <div className="flex justify-between border-t border-white/10 pt-2 text-base font-bold">

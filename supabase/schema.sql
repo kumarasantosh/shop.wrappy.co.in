@@ -79,6 +79,13 @@ create table if not exists orders (
   payment_method text default 'razorpay',
   payment_status text default 'pending',
   razorpay_order_id text,
+  uber_quote_id text,
+  uber_delivery_id text,
+  uber_tracking_url text,
+  uber_status text,
+  uber_fee numeric default 0,
+  dropoff_latitude numeric,
+  dropoff_longitude numeric,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );

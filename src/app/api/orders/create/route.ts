@@ -17,6 +17,11 @@ import {
 } from '../../../../lib/orderMeta'
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin'
 import { CouponRecord, ProductAddon, StoreSettingsRecord } from '../../../../lib/types'
+import {
+  createQuote,
+  isUberDirectConfigured,
+  isUberPickupConfigured,
+} from '../../../../lib/uberDirect'
 
 const TAX_RATE = 0.05
 const PACKING_FEE_PER_ITEM = 5
@@ -56,6 +61,9 @@ type CheckoutDraftPayload = {
   pickup_slot: string | null
   pickup_code: string | null
   razorpay_order_id: string
+  uber_quote_id: string | null
+  dropoff_latitude: number | null
+  dropoff_longitude: number | null
 }
 
 function minutesUntilOpen(settings: StoreSettingsRecord, nowDate: Date = new Date()): number {
@@ -207,6 +215,8 @@ export async function POST(req: Request) {
 
     let pickupSlotIso: string | null = null
     let pickupCode: string | null = null
+    let dropoffLat: number | null = null
+    let dropoffLng: number | null = null
 
     if (orderType === 'pickup') {
       const slotDate = parsePickupSlotToDate(
@@ -249,6 +259,9 @@ export async function POST(req: Request) {
             { status: 400 }
           )
         }
+
+        dropoffLat = lat
+        dropoffLng = lng
       }
     }
 
@@ -325,7 +338,34 @@ export async function POST(req: Request) {
 
     const discountedSubtotal = Math.max(0, subtotal - discountAmount)
     const tax = Math.round(discountedSubtotal * TAX_RATE)
-    const deliveryFee = 0
+
+    // Authoritative Uber Direct delivery fee. Re-quoted server-side so the
+    // customer pays the real fee regardless of what the checkout UI displayed.
+    // Pickup orders never incur a delivery fee. If Uber is unconfigured or
+    // the quote fails, we fall back to a free delivery rather than blocking
+    // the order.
+    let deliveryFee = 0
+    let uberQuoteId: string | null = null
+    if (
+      orderType === 'delivery' &&
+      isUberDirectConfigured() &&
+      isUberPickupConfigured()
+    ) {
+      try {
+        const quote = await createQuote({
+          dropoffAddress: address,
+          dropoffLatitude: dropoffLat ?? undefined,
+          dropoffLongitude: dropoffLng ?? undefined,
+          dropoffPhoneNumber: phone || undefined,
+          manifestTotalRupees: discountedSubtotal,
+        })
+        deliveryFee = Math.max(0, Math.round(quote.feeRupees))
+        uberQuoteId = quote.id
+      } catch (quoteErr) {
+        console.error('Uber Direct quote failed at checkout:', quoteErr)
+      }
+    }
+
     const total = discountedSubtotal + tax + packingFee + deliveryFee
     const etaInfo = pickupSlotIso
       ? {
@@ -377,6 +417,9 @@ export async function POST(req: Request) {
       pickup_slot: pickupSlotIso,
       pickup_code: pickupCode,
       razorpay_order_id: rzpOrder.id,
+      uber_quote_id: uberQuoteId,
+      dropoff_latitude: dropoffLat,
+      dropoff_longitude: dropoffLng,
     }
     const draftToken = signCheckoutDraftToken(draftPayload, CHECKOUT_DRAFT_SECRET)
 
@@ -398,6 +441,8 @@ export async function POST(req: Request) {
       draftToken,
       orderType,
       pickupSlot: pickupSlotIso,
+      deliveryFee,
+      total,
     })
   } catch (err: any) {
     return NextResponse.json({ error: (err && err.message) || 'error' }, { status: 500 })

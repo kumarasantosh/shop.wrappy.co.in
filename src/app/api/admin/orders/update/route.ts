@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { requireAdmin } from '../../../../../lib/admin'
 import { supabaseAdmin } from '../../../../../lib/supabaseAdmin'
 import { sendWhatsAppTemplate } from '../../../../../lib/whatsapp'
+import { dispatchUberDeliveryForOrder } from '../../../../../lib/uberDispatch'
+import { isUberDirectConfigured } from '../../../../../lib/uberDirect'
 
 type Status =
   | 'placed'
@@ -63,5 +65,31 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ order: data })
+  // Dispatch an Uber Direct courier when the order is marked ready for
+  // delivery. Pickup orders and already-dispatched orders are skipped inside
+  // the helper. Never blocks or fails the status update.
+  let uberDispatch: Awaited<ReturnType<typeof dispatchUberDeliveryForOrder>> | null = null
+  if (
+    status === 'out_for_delivery' &&
+    data &&
+    data.address &&
+    data.address !== 'Self Pickup at Store' &&
+    isUberDirectConfigured()
+  ) {
+    uberDispatch = await dispatchUberDeliveryForOrder(String(data.id))
+
+    // Re-read the order so the response carries the stored tracking url / status.
+    if (uberDispatch?.ok) {
+      const { data: refreshed } = await supabaseAdmin
+        .from('orders')
+        .select('*')
+        .eq('id', data.id)
+        .maybeSingle()
+      if (refreshed) {
+        return NextResponse.json({ order: refreshed, uberDispatch })
+      }
+    }
+  }
+
+  return NextResponse.json({ order: data, uberDispatch })
 }

@@ -92,6 +92,13 @@ export type OrderRecord = {
   eta: string | null
   estimated_delivery_minutes?: number | null
   delivery_time: string | null
+  uber_quote_id?: string | null
+  uber_delivery_id?: string | null
+  uber_tracking_url?: string | null
+  uber_status?: string | null
+  uber_fee?: number | null
+  dropoff_latitude?: number | null
+  dropoff_longitude?: number | null
   created_at: string
   updated_at?: string | null
   order_items?: OrderItemRecord[] | null
