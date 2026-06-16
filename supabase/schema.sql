@@ -249,3 +249,70 @@ create table if not exists push_subscriptions (
 );
 create index if not exists idx_push_subscriptions_clerk_user_id
   on push_subscriptions (clerk_user_id);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- WhatsApp Food-Order Flow
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Tracks where each customer is in the ordering conversation
+create table if not exists whatsapp_sessions (
+  id uuid default gen_random_uuid() primary key,
+  phone text unique not null,
+  state text not null default 'AWAITING_MENU',
+  name text,
+  item_number integer,
+  item_name text,
+  item_price integer,
+  qty integer,
+  address text,
+  subtotal integer,
+  delivery_charge integer default 30,
+  total integer,
+  order_id text,
+  payment_link text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+-- Auto-update updated_at on session changes
+create or replace function update_whatsapp_session_updated_at()
+returns trigger as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger whatsapp_sessions_updated_at
+  before update on whatsapp_sessions
+  for each row execute function update_whatsapp_session_updated_at();
+
+-- Confirmed orders created when Razorpay payment_link.paid fires
+create table if not exists whatsapp_orders (
+  id uuid default gen_random_uuid() primary key,
+  order_id text unique not null,
+  phone text not null,
+  customer_name text,
+  item_name text,
+  item_price integer,
+  qty integer,
+  subtotal integer,
+  delivery_charge integer,
+  total integer,
+  address text,
+  payment_link text,
+  razorpay_payment_id text,
+  status text default 'confirmed',
+  eta_minutes integer default 30,
+  created_at timestamptz default now()
+);
+
+-- Enable RLS (service role key bypasses these via supabaseAdmin client)
+alter table whatsapp_sessions enable row level security;
+alter table whatsapp_orders enable row level security;
+
+create policy "Service role full access on whatsapp_sessions"
+  on whatsapp_sessions for all using (true);
+
+create policy "Service role full access on whatsapp_orders"
+  on whatsapp_orders for all using (true);

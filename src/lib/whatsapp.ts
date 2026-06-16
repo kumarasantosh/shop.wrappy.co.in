@@ -362,3 +362,208 @@ export async function notifyAdminsNewOrder(
     console.log('[WhatsApp] notifyAdminsNewOrder complete', { orderId, sent, failed })
     return { sent, failed }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WhatsApp Food-Order Flow — 7 customer-facing templates
+// These are called by the WhatsApp webhook state machine.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GRAPH_URL = `https://graph.facebook.com/v${GRAPH_API_VERSION}`
+
+/** Low-level helper: send any approved template with arbitrary components */
+async function sendTemplate(
+  to: string,
+  templateName: string,
+  components: object[] = []
+): Promise<void> {
+  const body = {
+    messaging_product: 'whatsapp',
+    to,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: 'en' },
+      components,
+    },
+  }
+
+  const res = await fetch(`${GRAPH_URL}/${WHATSAPP_PHONE_NUMBER_ID}/messages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error('Meta API error: ' + JSON.stringify(data))
+}
+
+/** T1 — welcome_greeting: sent when customer says Hi */
+export async function sendWelcomeGreeting(phone: string, name: string): Promise<void> {
+  return sendTemplate(phone, 'welcome_greeting', [
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: name || 'there' },
+        { type: 'text', text: process.env.RESTAURANT_NAME || 'our restaurant' },
+      ],
+    },
+    {
+      type: 'button',
+      sub_type: 'quick_reply',
+      index: '0',
+      parameters: [{ type: 'payload', payload: 'VIEW_MENU' }],
+    },
+  ])
+}
+
+/** T2 — restaurant_menu: sent when customer requests menu */
+export async function sendMenu(phone: string, menuText: string): Promise<void> {
+  return sendTemplate(phone, 'restaurant_menu', [
+    {
+      type: 'header',
+      parameters: [
+        { type: 'text', text: `Our Menu — ${process.env.RESTAURANT_NAME || 'Wrappy'}` },
+      ],
+    },
+    {
+      type: 'body',
+      parameters: [{ type: 'text', text: menuText }],
+    },
+  ])
+}
+
+/** T3 — order_item_selected: sent when customer picks an item number */
+export async function sendItemSelected(
+  phone: string,
+  itemName: string,
+  price: number
+): Promise<void> {
+  return sendTemplate(phone, 'order_item_selected', [
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: itemName },
+        { type: 'text', text: String(price) },
+      ],
+    },
+  ])
+}
+
+/** T4 — request_delivery_address: sent after customer selects quantity */
+export async function sendAddressRequest(phone: string, name: string): Promise<void> {
+  return sendTemplate(phone, 'request_delivery_address', [
+    {
+      type: 'body',
+      parameters: [{ type: 'text', text: name || 'there' }],
+    },
+    {
+      type: 'button',
+      sub_type: 'quick_reply',
+      index: '0',
+      parameters: [{ type: 'payload', payload: 'SHARE_LOCATION' }],
+    },
+  ])
+}
+
+/** T5 — order_summary_confirm: sent after customer provides address */
+export async function sendOrderSummary(
+  phone: string,
+  session: {
+    name?: string
+    item_name?: string
+    qty?: number
+    subtotal?: number
+    delivery_charge?: number
+    total?: number
+    address?: string
+  }
+): Promise<void> {
+  return sendTemplate(phone, 'order_summary_confirm', [
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: session.name || 'there' },
+        { type: 'text', text: session.item_name || '' },
+        { type: 'text', text: String(session.qty ?? 1) },
+        { type: 'text', text: String(session.subtotal ?? 0) },
+        { type: 'text', text: String(session.delivery_charge ?? 0) },
+        { type: 'text', text: String(session.total ?? 0) },
+        { type: 'text', text: session.address || '' },
+      ],
+    },
+    {
+      type: 'button',
+      sub_type: 'quick_reply',
+      index: '0',
+      parameters: [{ type: 'payload', payload: 'CONFIRM_ORDER' }],
+    },
+    {
+      type: 'button',
+      sub_type: 'quick_reply',
+      index: '1',
+      parameters: [{ type: 'payload', payload: 'EDIT_ORDER' }],
+    },
+  ])
+}
+
+/** T6 — send_payment_link: sent after customer confirms, includes Razorpay link */
+export async function sendPaymentLink(
+  phone: string,
+  session: { name?: string; total?: number; order_id?: string },
+  paymentUrl: string
+): Promise<void> {
+  return sendTemplate(phone, 'send_payment_link', [
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: session.name || 'there' },
+        { type: 'text', text: String(session.total ?? 0) },
+        { type: 'text', text: session.order_id || '' },
+      ],
+    },
+    {
+      type: 'button',
+      sub_type: 'url',
+      index: '0',
+      parameters: [{ type: 'text', text: paymentUrl }],
+    },
+  ])
+}
+
+/** T7 — order_payment_confirmed: sent when Razorpay webhook fires */
+export async function sendOrderConfirmed(
+  phone: string,
+  session: {
+    name?: string
+    order_id?: string
+    item_name?: string
+    qty?: number
+    total?: number
+    address?: string
+  }
+): Promise<void> {
+  const trackingUrl = `${process.env.NEXT_PUBLIC_APP_URL || ''}/track/${session.order_id}`
+  return sendTemplate(phone, 'order_payment_confirmed', [
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: session.name || 'there' },
+        { type: 'text', text: session.order_id || '' },
+        { type: 'text', text: session.item_name || '' },
+        { type: 'text', text: String(session.qty ?? 1) },
+        { type: 'text', text: String(session.total ?? 0) },
+        { type: 'text', text: '30' }, // ETA minutes
+        { type: 'text', text: session.address || '' },
+      ],
+    },
+    {
+      type: 'button',
+      sub_type: 'url',
+      index: '0',
+      parameters: [{ type: 'text', text: trackingUrl }],
+    },
+  ])
+}
