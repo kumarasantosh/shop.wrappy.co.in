@@ -1,8 +1,9 @@
 'use client'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useSession } from '@clerk/nextjs'
 import { parseOrderMeta, stripOrderMeta } from '../../../lib/orderMeta'
-import supabase from '../../../lib/supabase'
+import { useClerkSupabaseClient } from '../../../lib/supabase'
 import { OrderItemRecord, OrderRecord } from '../../../lib/types'
 
 const ACCEPT_TIMER_SECONDS = 300
@@ -315,11 +316,14 @@ function SectionHeader({
 
 /* ─── Main Page ─── */
 export default function AdminOrdersPage() {
+  const { session, isLoaded: isSessionLoaded } = useSession()
+  const supabase = useClerkSupabaseClient()
   const [orders, setOrders] = useState<OrderRecord[]>([])
   const [pendingStatusByOrderId, setPendingStatusByOrderId] = useState<
     Record<string, OrderRecord['status']>
   >({})
   const [bannerText, setBannerText] = useState('')
+  const [liveStatus, setLiveStatus] = useState<'connecting' | 'live' | 'reconnecting'>('connecting')
   const [soundUnlocked, setSoundUnlocked] = useState(false)
   const [showPreviousOrders, setShowPreviousOrders] = useState(false)
   const [expandedPreviousId, setExpandedPreviousId] = useState<string | null>(null)
@@ -496,6 +500,100 @@ export default function AdminOrdersPage() {
     if (newCount > 0) notifyNewOrders(newCount)
   }
 
+  /* ── Realtime helpers (incremental, socket-driven) ── */
+
+  // Fetch one order (with items + product) — used to hydrate INSERT events,
+  // whose realtime payload does not include joined order_items.
+  async function fetchSingleOrder(id: string): Promise<OrderRecord | null> {
+    try {
+      const res = await fetch(`/api/admin/orders/${id}`, { cache: 'no-store' })
+      if (!res.ok) return null
+      const payload = await res.json()
+      return (payload.order || null) as OrderRecord | null
+    } catch {
+      return null
+    }
+  }
+
+  // Insert or merge a single order into local state, keeping newest first.
+  function upsertOrderInState(order: OrderRecord) {
+    setOrders((prev) => {
+      const idx = prev.findIndex((o) => o.id === order.id)
+      let next: OrderRecord[]
+      if (idx === -1) {
+        next = [order, ...prev]
+      } else {
+        next = [...prev]
+        next[idx] = {
+          ...prev[idx],
+          ...order,
+          // realtime row payloads omit joins — keep existing items if absent
+          order_items: order.order_items ?? prev[idx].order_items ?? [],
+        }
+      }
+      next.sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      )
+      syncSoundWithOrders(next)
+      return next
+    })
+
+    // Reconcile optimistic state once the server's value matches.
+    const pending = pendingStatusByOrderIdRef.current[order.id]
+    if (pending && order.status === pending) {
+      setPendingOrderStatus(order.id, null)
+    }
+  }
+
+  function removeOrderFromState(id: string) {
+    setOrders((prev) => {
+      const next = prev.filter((o) => o.id !== id)
+      syncSoundWithOrders(next)
+      return next
+    })
+    seenOrderIdsRef.current.delete(id)
+    setPendingOrderStatus(id, null)
+  }
+
+  // Apply a single postgres_changes event to local state.
+  async function handleRealtimeEvent(payload: {
+    eventType: 'INSERT' | 'UPDATE' | 'DELETE'
+    new: Partial<OrderRecord> | null
+    old: Partial<OrderRecord> | null
+  }) {
+    if (payload.eventType === 'DELETE') {
+      if (payload.old?.id) removeOrderFromState(payload.old.id)
+      return
+    }
+
+    const row = payload.new
+    if (!row?.id) return
+
+    if (payload.eventType === 'INSERT') {
+      const full = (await fetchSingleOrder(row.id)) || (row as OrderRecord)
+      const isUnseenPlaced =
+        full.status === 'placed' && !seenOrderIdsRef.current.has(full.id)
+      upsertOrderInState(full)
+      if (isUnseenPlaced) {
+        seenOrderIdsRef.current.add(full.id)
+        notifyNewOrders(1)
+      }
+      return
+    }
+
+    // UPDATE — patch in place; hydrate from server if we don't have it yet.
+    const exists = ordersRef.current.some((o) => o.id === row.id)
+    if (exists) {
+      upsertOrderInState(row as OrderRecord)
+    } else {
+      const full = (await fetchSingleOrder(row.id)) || (row as OrderRecord)
+      upsertOrderInState(full)
+    }
+    if (row.status === 'placed') seenOrderIdsRef.current.add(row.id)
+    else seenOrderIdsRef.current.delete(row.id)
+  }
+
   /* ── Audio setup ── */
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -519,35 +617,77 @@ export default function AdminOrdersPage() {
     }
   }, [])
 
-  /* ── Polling + realtime subscription ── */
+  /* ── Initial load (one full fetch via the Clerk-protected admin API) ── */
   useEffect(() => {
     fetchOrders({ initial: true }).catch(() => { })
-    const polling = window.setInterval(() => fetchOrders().catch(() => { }), 5000)
-
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
-      return () => {
-        window.clearInterval(polling)
-        if (bannerTimeoutRef.current) clearTimeout(bannerTimeoutRef.current)
-        stopAlertSound()
-      }
+    return () => {
+      if (bannerTimeoutRef.current) clearTimeout(bannerTimeoutRef.current)
+      stopAlertSound()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /* ── Realtime socket subscription (authenticated, no polling) ── */
+  useEffect(() => {
+    console.log('[orders-realtime] effect run — sessionLoaded:', isSessionLoaded, 'hasSession:', Boolean(session))
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      console.warn('[orders-realtime] NEXT_PUBLIC_SUPABASE_URL is not set')
+      return
+    }
+    // Wait for the Clerk session so the socket connects with the admin's
+    // identity; RLS only streams `orders` to an authenticated admin.
+    if (!isSessionLoaded || !session) {
+      console.log('[orders-realtime] waiting for Clerk session…')
+      return
+    }
+
+    // Diagnostic: confirm we actually get a token and inspect its claims.
+    session.getToken().then((t) => {
+      if (!t) {
+        console.warn('[orders-realtime] Clerk getToken() returned null')
+        return
+      }
+      try {
+        const claims = JSON.parse(atob(t.split('.')[1]))
+        console.log('[orders-realtime] token claims:', { role: claims.role, user_role: claims.user_role, sub: claims.sub })
+      } catch {
+        console.log('[orders-realtime] got token (could not decode claims)')
+      }
+    }).catch((e) => console.warn('[orders-realtime] getToken error', e))
 
     const channel = supabase
       .channel('admin-orders-realtime')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'orders' },
-        () => fetchOrders().catch(() => { })
+        (payload) => {
+          console.log('[orders-realtime] event received:', payload.eventType)
+          handleRealtimeEvent(
+            payload as unknown as Parameters<typeof handleRealtimeEvent>[0]
+          ).catch(() => { })
+        }
       )
-      .subscribe()
+      .subscribe((status, err) => {
+        console.log('[orders-realtime] channel status:', status, err || '')
+        if (status === 'SUBSCRIBED') {
+          setLiveStatus('live')
+          // Fires on first connect and again whenever the socket re-subscribes
+          // after a drop. Reconcile against the server once on (re)connect so
+          // we never miss events that fired while disconnected. Event-driven
+          // recovery, not periodic polling.
+          if (hasInitialOrderLoadRef.current) fetchOrders().catch(() => { })
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setLiveStatus('reconnecting')
+        } else if (status === 'CLOSED') {
+          setLiveStatus('connecting')
+        }
+      })
 
     return () => {
-      window.clearInterval(polling)
-      if (bannerTimeoutRef.current) clearTimeout(bannerTimeoutRef.current)
-      stopAlertSound()
       supabase.removeChannel(channel)
     }
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase, isSessionLoaded, session])
 
   /* ── Status actions ── */
   async function updateStatus(id: string, status: OrderRecord['status']) {
@@ -573,12 +713,15 @@ export default function AdminOrdersPage() {
         throw new Error('Status update failed')
       }
     } catch {
+      // Revert the optimistic change for just this order.
       setPendingOrderStatus(id, null)
-      fetchOrders().catch(() => { })
+      const fresh = await fetchSingleOrder(id)
+      if (fresh) upsertOrderInState(fresh)
       return
     }
 
-    fetchOrders().catch(() => { })
+    // Success: the realtime UPDATE echo confirms the change and clears the
+    // pending/optimistic flag in upsertOrderInState — no refetch needed.
   }
 
   const acceptOrder = (id: string) => updateStatus(id, 'preparing')
@@ -617,7 +760,28 @@ export default function AdminOrdersPage() {
       {/* Page header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-white">Orders</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-bold text-white">Orders</h2>
+            <span
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${liveStatus === 'live'
+                ? 'bg-emerald-500/15 text-emerald-400'
+                : liveStatus === 'reconnecting'
+                  ? 'bg-amber-500/15 text-amber-400'
+                  : 'bg-gray-500/15 text-gray-400'
+                }`}
+              title="Realtime connection status"
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${liveStatus === 'live'
+                  ? 'bg-emerald-400'
+                  : liveStatus === 'reconnecting'
+                    ? 'bg-amber-400 animate-pulse'
+                    : 'bg-gray-400 animate-pulse'
+                  }`}
+              />
+              {liveStatus === 'live' ? 'Live' : liveStatus === 'reconnecting' ? 'Reconnecting' : 'Connecting'}
+            </span>
+          </div>
           <p className="mt-0.5 text-xs text-gray-500">
             {activeCount} active · {completedOrders.length} completed today
           </p>

@@ -1,9 +1,9 @@
 'use client'
 import React, { useEffect, useMemo, useState } from 'react'
-import { useUser } from '@clerk/nextjs'
+import { useSession, useUser } from '@clerk/nextjs'
 import OrderTracker from '../../components/OrderTracker'
 import { parseOrderMeta, stripOrderMeta } from '../../lib/orderMeta'
-import supabase from '../../lib/supabase'
+import { useClerkSupabaseClient } from '../../lib/supabase'
 import { OrderRecord } from '../../lib/types'
 
 function formatMoney(value: number | string | null | undefined) {
@@ -18,6 +18,8 @@ function formatMoney(value: number | string | null | undefined) {
 
 export default function OrdersPage() {
   const { user } = useUser()
+  const { session, isLoaded: isSessionLoaded } = useSession()
+  const supabase = useClerkSupabaseClient()
   const [orders, setOrders] = useState<OrderRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
@@ -40,6 +42,9 @@ export default function OrdersPage() {
   useEffect(() => {
     if (!user?.id) return
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return
+    // Wait for the Clerk session so the socket is authenticated; RLS only
+    // streams a customer their own orders (customer_clerk_id = auth sub).
+    if (!isSessionLoaded || !session) return
 
     const channel = supabase
       .channel(`orders-realtime-${user.id}`)
@@ -60,7 +65,8 @@ export default function OrdersPage() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [user?.id])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, supabase, isSessionLoaded, session])
 
   const activeOrderCount = useMemo(
     () =>

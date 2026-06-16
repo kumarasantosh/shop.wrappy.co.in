@@ -169,3 +169,59 @@ create index if not exists idx_addresses_updated_at on addresses (updated_at des
 create unique index if not exists idx_addresses_default_per_user
   on addresses (customer_clerk_id)
   where is_default = true;
+
+-- ─── Realtime ───────────────────────────────────────────────
+-- Enable Supabase Realtime (websocket) change streaming for the
+-- admin orders panel. Without these the realtime channel subscribes
+-- but never receives any postgres_changes events.
+
+-- Emit full old/new row data on UPDATE/DELETE so the client can patch
+-- in place (instead of only receiving the primary key).
+alter table orders replica identity full;
+alter table order_items replica identity full;
+
+-- Add the tables to the realtime publication. Wrapped so re-running
+-- this file does not error if they are already members.
+do $$
+begin
+  begin
+    alter publication supabase_realtime add table orders;
+  exception when duplicate_object then null;
+  end;
+  begin
+    alter publication supabase_realtime add table order_items;
+  exception when duplicate_object then null;
+  end;
+end $$;
+
+-- ─── Realtime authorization (RLS) ───────────────────────────
+-- Realtime postgres_changes only delivers a row to a client if that
+-- client's identity is allowed to SELECT it. Clients connect with the
+-- public anon key carrying a Clerk session token (native Clerk<->Supabase
+-- integration), so authorization is driven entirely by RLS via auth.jwt().
+--
+-- Server-side reads/writes use the service-role key and bypass RLS, so
+-- these policies only affect the browser realtime sockets.
+
+alter table orders enable row level security;
+
+-- Remove the temporary development policy that exposed all orders to the
+-- public anon key (no longer needed once Clerk auth is wired up).
+drop policy if exists "anon read orders (dev)" on orders;
+
+-- Admins (Clerk public_metadata.role = 'admin', surfaced as the custom
+-- 'user_role' session-token claim) can read every order — powers the
+-- admin orders panel live feed.
+drop policy if exists "orders admin read" on orders;
+create policy "orders admin read"
+  on orders for select
+  to authenticated
+  using ( (auth.jwt() ->> 'user_role') = 'admin' );
+
+-- Customers can read only their own orders — powers the customer order
+-- tracker. Clerk's 'sub' claim is the user id stored in customer_clerk_id.
+drop policy if exists "orders owner read" on orders;
+create policy "orders owner read"
+  on orders for select
+  to authenticated
+  using ( customer_clerk_id = (auth.jwt() ->> 'sub') );
