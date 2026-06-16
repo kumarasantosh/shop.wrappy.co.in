@@ -480,7 +480,7 @@ export default function CheckoutPage() {
     setQuotingDelivery(true)
     setDeliveryQuoteFailed(false)
 
-    fetch('/api/uber/quote', {
+    fetch('/api/delivery/quote', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1115,19 +1115,17 @@ export default function CheckoutPage() {
           <div>
             <label className="mb-2 block text-sm text-gray-500">Order Type</label>
             <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setOrderType('delivery')}
-                className={`rounded-xl border px-4 py-4 transition-all ${orderType === 'delivery'
-                  ? 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
-                  : 'border-white/10 bg-[#222]'
-                  }`}
+              <div
+                className="relative overflow-hidden rounded-xl border border-white/10 bg-[#222] px-4 py-4 opacity-50 cursor-not-allowed"
               >
-                <div className="flex flex-col items-center gap-1.5">
-                  <span className="text-2xl">🚚</span>
-                  <span className={`text-sm font-medium ${orderType === 'delivery' ? 'text-emerald-300' : 'text-white'}`}>Delivery</span>
+                <div className="absolute -right-7 top-2 rotate-45 bg-gray-600 px-8 py-0.5 text-[9px] font-bold uppercase tracking-wider text-gray-300">
+                  Soon
                 </div>
-              </button>
+                <div className="flex flex-col items-center gap-1.5">
+                  <span className="text-2xl grayscale">🚚</span>
+                  <span className="text-sm font-medium text-gray-500">Delivery</span>
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => setOrderType('pickup')}

@@ -1,19 +1,15 @@
 import { NextResponse } from 'next/server'
-import {
-  createQuote,
-  isUberDirectConfigured,
-  isUberPickupConfigured,
-} from '../../../../lib/uberDirect'
+import { getDeliveryProvider } from '../../../../lib/delivery'
 
 /**
- * Returns a live Uber Direct delivery fee for a dropoff location.
- * Used by the checkout page to show the customer the real delivery fee
- * before they pay. The fee is re-quoted authoritatively server-side in
- * /api/orders/create, so this endpoint is display-only.
+ * Returns a live courier delivery fee for a dropoff location, used by checkout
+ * to show the real fee before payment. The fee is re-quoted authoritatively
+ * server-side in /api/orders/create, so this endpoint is display-only.
  */
 export async function POST(req: Request) {
-  if (!isUberDirectConfigured() || !isUberPickupConfigured()) {
-    return NextResponse.json({ error: 'uber_direct_not_configured' }, { status: 503 })
+  const provider = getDeliveryProvider()
+  if (!provider.isConfigured() || !provider.isPickupConfigured()) {
+    return NextResponse.json({ error: 'delivery_not_configured' }, { status: 503 })
   }
 
   try {
@@ -30,21 +26,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'address_required' }, { status: 400 })
     }
 
-    const quote = await createQuote({
+    const quote = await provider.createQuote({
       dropoffAddress: address,
       dropoffLatitude: Number.isFinite(Number(body.latitude)) ? Number(body.latitude) : undefined,
       dropoffLongitude: Number.isFinite(Number(body.longitude)) ? Number(body.longitude) : undefined,
       dropoffPhoneNumber: body.phone ? String(body.phone) : undefined,
-      manifestTotalRupees: Number.isFinite(Number(body.subtotal)) ? Number(body.subtotal) : undefined,
+      subtotalRupees: Number.isFinite(Number(body.subtotal)) ? Number(body.subtotal) : undefined,
     })
 
     return NextResponse.json({
-      quoteId: quote.id,
+      provider: provider.name,
+      quoteId: quote.quoteId,
       fee: quote.feeRupees,
       currency: quote.currency,
-      dropoffEta: quote.dropoffEta,
-      durationMinutes: quote.durationMinutes,
-      expiresAt: quote.expiresAt,
+      etaMinutes: quote.etaMinutes,
     })
   } catch (err: any) {
     return NextResponse.json(

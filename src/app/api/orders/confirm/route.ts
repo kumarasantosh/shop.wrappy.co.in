@@ -41,7 +41,8 @@ type CheckoutDraftPayload = {
   pickup_slot: string | null
   pickup_code: string | null
   razorpay_order_id: string
-  uber_quote_id?: string | null
+  courier_quote_id?: string | null
+  delivery_provider?: string | null
   dropoff_latitude?: number | null
   dropoff_longitude?: number | null
 }
@@ -164,8 +165,9 @@ export async function POST(req: Request) {
       payment_method: draft.payment_method,
       payment_status: 'paid',
       razorpay_order_id: razorpayOrderId,
-      uber_quote_id: draft.uber_quote_id || null,
-      uber_fee: draft.order_type === 'delivery' ? draft.delivery_fee : 0,
+      delivery_provider: draft.delivery_provider || null,
+      courier_quote_id: draft.courier_quote_id || null,
+      courier_fee: draft.order_type === 'delivery' ? draft.delivery_fee : 0,
       dropoff_latitude: draft.dropoff_latitude ?? null,
       dropoff_longitude: draft.dropoff_longitude ?? null,
     }
