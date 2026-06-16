@@ -6,7 +6,15 @@ import { useUser } from '@clerk/nextjs'
 import OSMAddressPicker from '../../components/OSMAddressPicker'
 import { useCartStore } from '../../store/cart'
 import { AddressRecord, CustomerPhoneRecord } from '../../lib/types'
-import { isWithinDeliveryRadius, MAX_DELIVERY_DISTANCE_KM } from '../../lib/deliveryRadius'
+// Delivery is disabled — stub out the radius helpers so the file compiles.
+const MAX_DELIVERY_DISTANCE_KM = 10
+async function isWithinDeliveryRadius(
+  _lat: number,
+  _lng: number,
+  _max?: number
+): Promise<{ distanceKm: number; withinRange: boolean; method: string }> {
+  return { distanceKm: 0, withinRange: true, method: 'haversine' }
+}
 
 const TAX_RATE = 0.05
 const PACKING_FEE_PER_ITEM = 5

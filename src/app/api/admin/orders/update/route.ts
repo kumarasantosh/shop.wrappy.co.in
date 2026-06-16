@@ -2,8 +2,6 @@ import { NextResponse } from 'next/server'
 import { requireAdmin } from '../../../../../lib/admin'
 import { supabaseAdmin } from '../../../../../lib/supabaseAdmin'
 import { sendWhatsAppTemplate } from '../../../../../lib/whatsapp'
-import { dispatchDeliveryForOrder } from '../../../../../lib/dispatchDelivery'
-import { getDeliveryProvider } from '../../../../../lib/delivery'
 
 type Status =
   | 'placed'
@@ -65,31 +63,5 @@ export async function POST(req: Request) {
     }
   }
 
-  // Dispatch a courier when the order is marked ready for delivery. Pickup
-  // orders and already-dispatched orders are skipped inside the helper. Never
-  // blocks or fails the status update.
-  let courierDispatch: Awaited<ReturnType<typeof dispatchDeliveryForOrder>> | null = null
-  if (
-    status === 'out_for_delivery' &&
-    data &&
-    data.address &&
-    data.address !== 'Self Pickup at Store' &&
-    getDeliveryProvider().isConfigured()
-  ) {
-    courierDispatch = await dispatchDeliveryForOrder(String(data.id))
-
-    // Re-read the order so the response carries the stored tracking url / status.
-    if (courierDispatch?.ok) {
-      const { data: refreshed } = await supabaseAdmin
-        .from('orders')
-        .select('*')
-        .eq('id', data.id)
-        .maybeSingle()
-      if (refreshed) {
-        return NextResponse.json({ order: refreshed, courierDispatch })
-      }
-    }
-  }
-
-  return NextResponse.json({ order: data, courierDispatch })
+  return NextResponse.json({ order: data })
 }
