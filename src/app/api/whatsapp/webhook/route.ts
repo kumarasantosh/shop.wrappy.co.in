@@ -54,6 +54,8 @@ export async function POST(req: NextRequest) {
 
 async function handleInbound(body: Record<string, unknown>) {
   try {
+    console.log('[WA] Raw body:', JSON.stringify(body))
+
     const entry = (body?.entry as unknown[])?.[0] as Record<string, unknown>
     const change = (entry?.changes as unknown[])?.[0] as Record<string, unknown>
     const value = change?.value as Record<string, unknown>
@@ -61,11 +63,16 @@ async function handleInbound(body: Record<string, unknown>) {
     const message = messages?.[0] as Record<string, unknown>
 
     // Ignore status updates (delivered, read receipts)
-    if (!message) return
+    if (!message) {
+      console.log('[WA] No message found — likely a status update, ignoring')
+      return
+    }
 
     const phone = message.from as string
     const contacts = value?.contacts as { profile?: { name?: string } }[]
     const profileName = contacts?.[0]?.profile?.name || ''
+
+    console.log('[WA] Message from:', phone, '| type:', message.type, '| name:', profileName)
 
     // Extract text or button payload
     let text = ''
@@ -82,6 +89,7 @@ async function handleInbound(body: Record<string, unknown>) {
     }
 
     const input = text.toUpperCase().trim()
+    console.log('[WA] Text:', text, '| Input:', input, '| Payload:', payload)
 
     // CANCEL resets everything
     if (input === 'CANCEL' || input === 'RESET') {
@@ -92,10 +100,13 @@ async function handleInbound(body: Record<string, unknown>) {
 
     // Load or create session
     let session = await getSession(phone)
+    console.log('[WA] Session:', session ? `state=${session.state}` : 'none')
 
     if (!session) {
+      console.log('[WA] New customer — creating session and sending welcome')
       await setSession(phone, { phone, name: profileName, state: 'AWAITING_MENU' })
       await sendWelcomeGreeting(phone, profileName)
+      console.log('[WA] Welcome sent')
       return
     }
 
@@ -221,8 +232,9 @@ async function handleInbound(body: Record<string, unknown>) {
         await sendWelcomeGreeting(phone, profileName)
       }
     }
-  } catch (err) {
-    console.error('[WhatsApp] Webhook error:', err)
+  } catch (err: unknown) {
+    console.error('[WA] Webhook error:', err instanceof Error ? err.message : err)
+    if (err instanceof Error) console.error('[WA] Stack:', err.stack)
   }
 }
 

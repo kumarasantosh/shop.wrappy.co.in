@@ -382,7 +382,7 @@ async function sendTemplate(
     type: 'template',
     template: {
       name: templateName,
-      language: { code: 'en' },
+      language: { code: 'en_US' },
       components,
     },
   }
@@ -397,6 +397,7 @@ async function sendTemplate(
   })
 
   const data = await res.json().catch(() => ({}))
+  console.log('[sendTemplate] response', res.status, JSON.stringify(data))
   if (!res.ok) throw new Error('Meta API error: ' + JSON.stringify(data))
 }
 
