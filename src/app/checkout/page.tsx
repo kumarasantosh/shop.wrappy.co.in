@@ -12,7 +12,7 @@ async function isWithinDeliveryRadius(
   _lat: number,
   _lng: number,
   _max?: number
-): Promise<{ distanceKm: number; withinRange: boolean; method: string }> {
+): Promise<{ distanceKm: number; withinRange: boolean; method: 'haversine' | 'driving' }> {
   return { distanceKm: 0, withinRange: true, method: 'haversine' }
 }
 
