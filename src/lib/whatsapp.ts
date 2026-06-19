@@ -411,12 +411,6 @@ export async function sendWelcomeGreeting(phone: string, name: string): Promise<
         { type: 'text', parameter_name: 'restaurant_name', text: process.env.RESTAURANT_NAME || 'our restaurant' },
       ],
     },
-    {
-      type: 'button',
-      sub_type: 'quick_reply',
-      index: '0',
-      parameters: [{ type: 'payload', payload: 'VIEW_MENU' }],
-    },
   ])
 }
 
