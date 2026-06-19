@@ -407,8 +407,8 @@ export async function sendWelcomeGreeting(phone: string, name: string): Promise<
     {
       type: 'body',
       parameters: [
-        { type: 'text', text: name || 'there' },
-        { type: 'text', text: process.env.RESTAURANT_NAME || 'our restaurant' },
+        { type: 'text', parameter_name: 'customer_name', text: name || 'there' },
+        { type: 'text', parameter_name: 'restaurant_name', text: process.env.RESTAURANT_NAME || 'our restaurant' },
       ],
     },
     {
@@ -426,8 +426,8 @@ export async function sendMenu(phone: string, menuText: string): Promise<void> {
     {
       type: 'body',
       parameters: [
-        { type: 'text', text: `Our Menu — ${process.env.RESTAURANT_NAME || 'Wrappy'}` },
-        { type: 'text', text: menuText },
+        { type: 'text', parameter_name: 'header_text', text: `Our Menu — ${process.env.RESTAURANT_NAME || 'Wrappy'}` },
+        { type: 'text', parameter_name: 'menu_body', text: menuText },
       ],
     },
   ])
@@ -443,8 +443,8 @@ export async function sendItemSelected(
     {
       type: 'body',
       parameters: [
-        { type: 'text', text: itemName },
-        { type: 'text', text: String(price) },
+        { type: 'text', parameter_name: 'item_name', text: itemName },
+        { type: 'text', parameter_name: 'price', text: String(price) },
       ],
     },
   ])
@@ -455,7 +455,7 @@ export async function sendAddressRequest(phone: string, name: string): Promise<v
   return sendTemplate(phone, 'request_delivery_address', [
     {
       type: 'body',
-      parameters: [{ type: 'text', text: name || 'there' }],
+      parameters: [{ type: 'text', parameter_name: 'customer_name', text: name || 'there' }],
     },
   ])
 }
@@ -477,13 +477,13 @@ export async function sendOrderSummary(
     {
       type: 'body',
       parameters: [
-        { type: 'text', text: session.name || 'there' },
-        { type: 'text', text: session.item_name || '' },
-        { type: 'text', text: String(session.qty ?? 1) },
-        { type: 'text', text: String(session.subtotal ?? 0) },
-        { type: 'text', text: String(session.delivery_charge ?? 0) },
-        { type: 'text', text: String(session.total ?? 0) },
-        { type: 'text', text: session.address || '' },
+        { type: 'text', parameter_name: 'customer_name', text: session.name || 'there' },
+        { type: 'text', parameter_name: 'item_name', text: session.item_name || '' },
+        { type: 'text', parameter_name: 'quantity', text: String(session.qty ?? 1) },
+        { type: 'text', parameter_name: 'subtotal', text: String(session.subtotal ?? 0) },
+        { type: 'text', parameter_name: 'delivery_fee', text: String(session.delivery_charge ?? 0) },
+        { type: 'text', parameter_name: 'total_amount', text: String(session.total ?? 0) },
+        { type: 'text', parameter_name: 'delivery_address', text: session.address || '' },
       ],
     },
     {
@@ -511,9 +511,9 @@ export async function sendPaymentLink(
     {
       type: 'body',
       parameters: [
-        { type: 'text', text: session.name || 'there' },
-        { type: 'text', text: String(session.total ?? 0) },
-        { type: 'text', text: session.order_id || '' },
+        { type: 'text', parameter_name: 'customer_name', text: session.name || 'there' },
+        { type: 'text', parameter_name: 'amount', text: String(session.total ?? 0) },
+        { type: 'text', parameter_name: 'order_id', text: session.order_id || '' },
       ],
     },
     {
