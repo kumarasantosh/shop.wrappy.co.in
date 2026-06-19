@@ -117,7 +117,7 @@ async function handleInbound(body: Record<string, unknown>) {
       case 'AWAITING_MENU': {
         if (input === 'MENU' || payload === 'VIEW_MENU') {
           await updateSession(phone, { state: 'AWAITING_ITEM' })
-          await sendMenu(phone, await buildMenuText())
+          await sendWhatsAppText(phone, await buildMenuText())
         } else {
           // Any other input (including HI/HELLO) re-sends the welcome
           await sendWelcomeGreeting(phone, session.name || profileName)
@@ -216,7 +216,7 @@ async function handleInbound(body: Record<string, unknown>) {
           await sendPaymentLink(phone, updatedSession, paymentUrl)
         } else if (payload === 'EDIT_ORDER' || input === 'EDIT') {
           await updateSession(phone, { state: 'AWAITING_ITEM' })
-          await sendMenu(phone, await buildMenuText())
+          await sendWhatsAppText(phone, await buildMenuText())
         } else {
           await sendOrderSummary(phone, session)
         }
@@ -234,7 +234,7 @@ async function handleInbound(body: Record<string, unknown>) {
       case 'ORDER_CONFIRMED': {
         if (input === 'MENU' || input === 'ORDER' || payload === 'VIEW_MENU') {
           await updateSession(phone, { state: 'AWAITING_ITEM' })
-          await sendMenu(phone, await buildMenuText())
+          await sendWhatsAppText(phone, await buildMenuText())
         } else {
           await sendWelcomeGreeting(phone, session.name || profileName)
         }
