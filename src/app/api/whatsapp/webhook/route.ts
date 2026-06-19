@@ -271,5 +271,5 @@ async function buildMenuText(): Promise<string> {
   if (items.length === 0) return 'Menu not available. Please call us to order.'
   return items
     .map((item, i) => `${i + 1}. ${item.name} — ₹${item.price}`)
-    .join('\n')
+    .join(' | ')
 }
