@@ -11,17 +11,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   sendWelcomeGreeting,
-  sendMenu,
   sendItemSelected,
   sendAddressRequest,
   sendOrderSummary,
   sendPaymentLink,
+  sendWhatsAppText,
 } from '../../../../lib/whatsapp'
 import {
   getSession,
   setSession,
   updateSession,
   clearSession,
+  CartItem,
 } from '../../../../lib/whatsappSession'
 import { createPaymentLink } from '../../../../lib/razorpay'
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin'
@@ -94,8 +95,8 @@ async function handleInbound(body: Record<string, unknown>) {
     // HI / HELLO / CANCEL / RESET always restart from the beginning
     if (input === 'HI' || input === 'HELLO' || input === 'CANCEL' || input === 'RESET') {
       await clearSession(phone)
-      await setSession(phone, { phone, name: profileName, state: 'AWAITING_ITEM' })
-      await sendMenu(phone, await buildMenuText())
+      await setSession(phone, { phone, name: profileName, state: 'AWAITING_ITEM', cart: [] })
+      await sendWhatsAppText(phone, await buildMenuText())
       return
     }
 
@@ -105,8 +106,8 @@ async function handleInbound(body: Record<string, unknown>) {
 
     if (!session) {
       console.log('[WA] New customer — creating session and sending menu')
-      await setSession(phone, { phone, name: profileName, state: 'AWAITING_ITEM' })
-      await sendMenu(phone, await buildMenuText())
+      await setSession(phone, { phone, name: profileName, state: 'AWAITING_ITEM', cart: [] })
+      await sendWhatsAppText(phone, await buildMenuText())
       return
     }
 
@@ -126,13 +127,24 @@ async function handleInbound(body: Record<string, unknown>) {
 
       case 'AWAITING_ITEM': {
         if (input === 'MENU' || payload === 'VIEW_MENU') {
-          await sendMenu(phone, await buildMenuText())
+          await sendWhatsAppText(phone, await buildMenuText())
+          break
+        }
+        if (input === 'DONE' || input === 'ORDER') {
+          const cart = session.cart || []
+          if (cart.length === 0) {
+            await sendWhatsAppText(phone, 'Your cart is empty. Please select an item.')
+            await sendWhatsAppText(phone, await buildMenuText())
+            break
+          }
+          await updateSession(phone, { state: 'AWAITING_ADDRESS' })
+          await sendAddressRequest(phone, session.name || profileName)
           break
         }
         const menuItems = await getMenuItems()
         const itemIndex = parseInt(text, 10) - 1
         if (isNaN(itemIndex) || itemIndex < 0 || itemIndex >= menuItems.length) {
-          await sendMenu(phone, await buildMenuText())
+          await sendWhatsAppText(phone, await buildMenuText())
           break
         }
         const item = menuItems[itemIndex]
@@ -152,8 +164,18 @@ async function handleInbound(body: Record<string, unknown>) {
           await sendItemSelected(phone, session.item_name || '', session.item_price || 0)
           break
         }
-        await updateSession(phone, { state: 'AWAITING_ADDRESS', qty })
-        await sendAddressRequest(phone, session.name || profileName)
+        const newItem: CartItem = {
+          name: session.item_name || '',
+          price: session.item_price || 0,
+          qty,
+        }
+        const cart = [...(session.cart || []), newItem]
+        await updateSession(phone, { state: 'AWAITING_ITEM', cart })
+        const cartSummary = cart.map((c) => `• ${c.name} x${c.qty} — ₹${c.price * c.qty}`).join('\n')
+        await sendWhatsAppText(
+          phone,
+          `Added! ✅\n\n*Your cart:*\n${cartSummary}\n\nReply with another item number to add more, or type *DONE* to proceed.`
+        )
         break
       }
 
@@ -162,7 +184,8 @@ async function handleInbound(body: Record<string, unknown>) {
           await sendAddressRequest(phone, session.name || profileName)
           break
         }
-        const subtotal = (session.item_price || 0) * (session.qty || 1)
+        const cart = session.cart || []
+        const subtotal = cart.reduce((sum, c) => sum + c.price * c.qty, 0)
         const total = subtotal + DELIVERY_CHARGE
         const orderId = `ORD-${Date.now()}`
 
@@ -260,7 +283,6 @@ async function getMenuItems(): Promise<MenuItem[]> {
 async function buildMenuText(): Promise<string> {
   const items = await getMenuItems()
   if (items.length === 0) return 'Menu not available. Please call us to order.'
-  return items
-    .map((item, i) => `${i + 1}. ${item.name} — ₹${item.price}`)
-    .join(' | ')
+  const lines = items.map((item, i) => `${i + 1}. ${item.name} — ₹${item.price}`)
+  return `*Our Menu 🍽️*\n\n${lines.join('\n')}\n\nReply with item number(s) to order. Type *DONE* when finished.`
 }

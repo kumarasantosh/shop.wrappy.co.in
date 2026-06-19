@@ -4,6 +4,12 @@
 
 import { supabaseAdmin } from './supabaseAdmin'
 
+export interface CartItem {
+  name: string
+  price: number
+  qty: number
+}
+
 export interface WhatsAppSession {
   id?: string
   phone: string
@@ -13,6 +19,7 @@ export interface WhatsAppSession {
   item_name?: string
   item_price?: number
   qty?: number
+  cart?: CartItem[]
   address?: string
   subtotal?: number
   delivery_charge?: number
