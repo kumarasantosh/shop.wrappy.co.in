@@ -95,8 +95,8 @@ async function handleInbound(body: Record<string, unknown>) {
     // HI / HELLO / CANCEL / RESET always restart from the beginning
     if (input === 'HI' || input === 'HELLO' || input === 'CANCEL' || input === 'RESET') {
       await clearSession(phone)
-      await setSession(phone, { phone, name: profileName, state: 'AWAITING_ITEM', cart: [] })
-      await sendWhatsAppText(phone, await buildMenuText())
+      await setSession(phone, { phone, name: profileName, state: 'AWAITING_MENU', cart: [] })
+      await sendWelcomeGreeting(phone, profileName)
       return
     }
 
@@ -105,9 +105,9 @@ async function handleInbound(body: Record<string, unknown>) {
     console.log('[WA] Session:', session ? `state=${session.state}` : 'none')
 
     if (!session) {
-      console.log('[WA] New customer — creating session and sending menu')
-      await setSession(phone, { phone, name: profileName, state: 'AWAITING_ITEM', cart: [] })
-      await sendWhatsAppText(phone, await buildMenuText())
+      console.log('[WA] New customer — creating session and sending welcome')
+      await setSession(phone, { phone, name: profileName, state: 'AWAITING_MENU', cart: [] })
+      await sendWelcomeGreeting(phone, profileName)
       return
     }
 
