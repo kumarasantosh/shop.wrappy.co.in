@@ -91,9 +91,10 @@ async function handleInbound(body: Record<string, unknown>) {
     const input = text.toUpperCase().trim()
     console.log('[WA] Text:', text, '| Input:', input, '| Payload:', payload)
 
-    // CANCEL resets everything
-    if (input === 'CANCEL' || input === 'RESET') {
+    // HI / HELLO / CANCEL / RESET always restart from the beginning
+    if (input === 'HI' || input === 'HELLO' || input === 'CANCEL' || input === 'RESET') {
       await clearSession(phone)
+      await setSession(phone, { phone, name: profileName, state: 'AWAITING_MENU' })
       await sendWelcomeGreeting(phone, profileName)
       return
     }
@@ -125,11 +126,6 @@ async function handleInbound(body: Record<string, unknown>) {
       }
 
       case 'AWAITING_ITEM': {
-        if (input === 'HI' || input === 'HELLO') {
-          await updateSession(phone, { state: 'AWAITING_MENU' })
-          await sendWelcomeGreeting(phone, session.name || profileName)
-          break
-        }
         if (input === 'MENU' || payload === 'VIEW_MENU') {
           await sendMenu(phone, await buildMenuText())
           break
@@ -214,13 +210,8 @@ async function handleInbound(body: Record<string, unknown>) {
       }
 
       case 'ORDER_CONFIRMED': {
-        if (input === 'MENU' || input === 'ORDER' || input === 'HI') {
-          await clearSession(phone)
-          await setSession(phone, {
-            phone,
-            name: session.name || profileName,
-            state: 'AWAITING_ITEM',
-          })
+        if (input === 'MENU' || input === 'ORDER' || payload === 'VIEW_MENU') {
+          await updateSession(phone, { state: 'AWAITING_ITEM' })
           await sendMenu(phone, await buildMenuText())
         } else {
           await sendWelcomeGreeting(phone, session.name || profileName)
