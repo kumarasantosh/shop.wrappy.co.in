@@ -114,21 +114,22 @@ async function handleInbound(body: Record<string, unknown>) {
     switch (session.state) {
 
       case 'AWAITING_MENU': {
-        if (
-          input === 'MENU' ||
-          input === 'HI' ||
-          input === 'HELLO' ||
-          payload === 'VIEW_MENU'
-        ) {
+        if (input === 'MENU' || payload === 'VIEW_MENU') {
           await updateSession(phone, { state: 'AWAITING_ITEM' })
           await sendMenu(phone, await buildMenuText())
         } else {
+          // Any other input (including HI/HELLO) re-sends the welcome
           await sendWelcomeGreeting(phone, session.name || profileName)
         }
         break
       }
 
       case 'AWAITING_ITEM': {
+        if (input === 'HI' || input === 'HELLO') {
+          await updateSession(phone, { state: 'AWAITING_MENU' })
+          await sendWelcomeGreeting(phone, session.name || profileName)
+          break
+        }
         if (input === 'MENU' || payload === 'VIEW_MENU') {
           await sendMenu(phone, await buildMenuText())
           break
