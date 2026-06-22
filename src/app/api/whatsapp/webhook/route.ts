@@ -84,6 +84,11 @@ async function handleInbound(body: Record<string, unknown>) {
       const interactive = message.interactive as Record<string, Record<string, string>>
       payload = interactive?.button_reply?.payload || ''
       text = interactive?.button_reply?.title || ''
+    } else if (message.type === 'button') {
+      // Template quick-reply button taps (e.g. "View Menu" on the welcome template)
+      const btn = message.button as Record<string, string>
+      payload = btn?.payload || ''
+      text = btn?.text || ''
     } else if (message.type === 'location') {
       const loc = message.location as { latitude: number; longitude: number }
       text = `${loc.latitude}, ${loc.longitude}`
