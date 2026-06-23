@@ -265,13 +265,41 @@ interface MenuItem {
   price: number
   is_veg?: boolean
   is_available?: boolean
+  category?: string | null
+  category_position?: number | null
 }
 
-/** Fetch available products from Supabase and return them as menu items. */
+const CATEGORY_EMOJI: Record<string, string> = {
+  wraps: '🌯',
+  fries: '🍟',
+  ufo: '🛸',
+  thickshakes: '🥤',
+  thickshake: '🥤',
+  mojitos: '🍹',
+  mojito: '🍹',
+  burgers: '🍔',
+  burger: '🍔',
+  brownies: '🍫',
+  brownie: '🍫',
+  'ice cream': '🍦',
+  'ice creams': '🍦',
+  icecream: '🍦',
+  sandwiches: '🥪',
+  sandwich: '🥪',
+  nuggets: '🍗',
+  strips: '🍗',
+}
+
+function categoryEmoji(name: string): string {
+  const key = name.toLowerCase().trim()
+  return CATEGORY_EMOJI[key] || '🍽️'
+}
+
+/** Fetch available products from Supabase with their category, ordered by category position then name. */
 async function getMenuItems(): Promise<MenuItem[]> {
   const { data, error } = await supabaseAdmin
     .from('products')
-    .select('name, price, is_veg, is_available')
+    .select('name, price, is_veg, is_available, categories(name, position)')
     .eq('is_available', true)
     .order('name', { ascending: true })
 
@@ -283,12 +311,41 @@ async function getMenuItems(): Promise<MenuItem[]> {
     }
     return []
   }
-  return data as MenuItem[]
+
+  return (data as any[]).map((row) => ({
+    name: row.name,
+    price: row.price,
+    is_veg: row.is_veg,
+    is_available: row.is_available,
+    category: row.categories?.name ?? null,
+    category_position: row.categories?.position ?? 999,
+  }))
 }
 
 async function buildMenuText(): Promise<string> {
   const items = await getMenuItems()
   if (items.length === 0) return 'Menu not available. Please call us to order.'
-  const lines = items.map((item, i) => `${i + 1}. ${item.name} — ₹${item.price}`)
-  return `*Our Menu 🍽️*\n\n${lines.join('\n')}\n\nReply with item number(s) to order. Type *DONE* when finished.`
+
+  // Group by category, preserving category position order
+  const categoryMap = new Map<string, { position: number; items: MenuItem[] }>()
+  for (const item of items) {
+    const cat = item.category || 'Other'
+    const pos = item.category_position ?? 999
+    if (!categoryMap.has(cat)) categoryMap.set(cat, { position: pos, items: [] })
+    categoryMap.get(cat)!.items.push(item)
+  }
+
+  // Sort categories by position
+  const sortedCategories = [...categoryMap.entries()].sort((a, b) => a[1].position - b[1].position)
+
+  let counter = 1
+  const sections: string[] = []
+
+  for (const [catName, { items: catItems }] of sortedCategories) {
+    const emoji = categoryEmoji(catName)
+    const lines = catItems.map((item) => `${counter++}. ${item.name} — ₹${item.price}`)
+    sections.push(`*${emoji} ${catName}*\n${lines.join('\n')}`)
+  }
+
+  return `*Our Menu 🍽️*\n\n${sections.join('\n\n')}\n\nReply with item number to order. Type *DONE* when finished.`
 }
