@@ -95,6 +95,7 @@ async function handleInbound(body: Record<string, unknown>) {
     }
 
     const input = text.toUpperCase().trim()
+    const payloadNorm = payload.toUpperCase().replace(/[\s_-]+/g, '_')
     console.log('[WA] Text:', text, '| Input:', input, '| Payload:', payload)
 
     // HI / HELLO / CANCEL / RESET always restart from the beginning
@@ -120,7 +121,7 @@ async function handleInbound(body: Record<string, unknown>) {
     switch (session.state) {
 
       case 'AWAITING_MENU': {
-        if (input === 'MENU' || payload === 'VIEW_MENU') {
+        if (input === 'MENU' || input === 'VIEW MENU' || payloadNorm === 'VIEW_MENU') {
           await updateSession(phone, { state: 'AWAITING_ITEM' })
           await sendWhatsAppText(phone, await buildMenuText())
         } else {
@@ -131,7 +132,7 @@ async function handleInbound(body: Record<string, unknown>) {
       }
 
       case 'AWAITING_ITEM': {
-        if (input === 'MENU' || payload === 'VIEW_MENU') {
+        if (input === 'MENU' || input === 'VIEW MENU' || payloadNorm === 'VIEW_MENU') {
           await sendWhatsAppText(phone, await buildMenuText())
           break
         }
@@ -237,7 +238,7 @@ async function handleInbound(body: Record<string, unknown>) {
       }
 
       case 'ORDER_CONFIRMED': {
-        if (input === 'MENU' || input === 'ORDER' || payload === 'VIEW_MENU') {
+        if (input === 'MENU' || input === 'VIEW MENU' || input === 'ORDER' || payloadNorm === 'VIEW_MENU') {
           await updateSession(phone, { state: 'AWAITING_ITEM' })
           await sendWhatsAppText(phone, await buildMenuText())
         } else {
