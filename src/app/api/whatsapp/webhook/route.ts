@@ -143,8 +143,11 @@ async function handleInbound(body: Record<string, unknown>) {
             await sendWhatsAppText(phone, await buildMenuText())
             break
           }
-          await updateSession(phone, { state: 'AWAITING_ADDRESS' })
-          await sendAddressRequest(phone, session.name || profileName)
+          await updateSession(phone, { state: 'AWAITING_LOCATION' })
+          await sendWhatsAppText(
+            phone,
+            `Perfect! Kindly provide us with the WhatsApp location where our services are required? 📍\n\nTap on "Attachment" icon or "+" Symbol → Location → Send the exact Location where service is required`
+          )
           break
         }
         const menuItems = await getOrderedMenuItems()
@@ -185,9 +188,31 @@ async function handleInbound(body: Record<string, unknown>) {
         break
       }
 
+      case 'AWAITING_LOCATION': {
+        if (message.type !== 'location') {
+          // Remind them to share location pin, not text
+          await sendWhatsAppText(
+            phone,
+            `Please share your *WhatsApp location* 📍\n\nTap on "Attachment" icon or "+" Symbol → Location → Send the exact Location where service is required`
+          )
+          break
+        }
+        const loc = message.location as { latitude: number; longitude: number }
+        const locationStr = `${loc.latitude},${loc.longitude}`
+        await updateSession(phone, { state: 'AWAITING_ADDRESS', location: locationStr })
+        await sendWhatsAppText(
+          phone,
+          `Now, kindly provide us with your complete address for a seamless service experience! 🏠\n\n(Building name, flat number, landmark, etc.)`
+        )
+        break
+      }
+
       case 'AWAITING_ADDRESS': {
         if (!text || text.length < 5) {
-          await sendAddressRequest(phone, session.name || profileName)
+          await sendWhatsAppText(
+            phone,
+            `Please share your complete address (building name, flat number, landmark, etc.) 🏠`
+          )
           break
         }
         const cart = session.cart || []

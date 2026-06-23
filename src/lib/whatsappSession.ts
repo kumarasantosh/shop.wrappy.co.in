@@ -20,6 +20,7 @@ export interface WhatsAppSession {
   item_price?: number
   qty?: number
   cart?: CartItem[]
+  location?: string
   address?: string
   subtotal?: number
   delivery_charge?: number
