@@ -147,7 +147,7 @@ async function handleInbound(body: Record<string, unknown>) {
           await sendAddressRequest(phone, session.name || profileName)
           break
         }
-        const menuItems = await getMenuItems()
+        const menuItems = await getOrderedMenuItems()
         const itemIndex = parseInt(text, 10) - 1
         if (isNaN(itemIndex) || itemIndex < 0 || itemIndex >= menuItems.length) {
           await sendWhatsAppText(phone, await buildMenuText())
@@ -295,7 +295,7 @@ function categoryEmoji(name: string): string {
   return CATEGORY_EMOJI[key] || '🍽️'
 }
 
-/** Fetch available products from Supabase with their category, ordered by category position then name. */
+/** Fetch available products from Supabase with their category. */
 async function getMenuItems(): Promise<MenuItem[]> {
   const { data, error } = await supabaseAdmin
     .from('products')
@@ -304,7 +304,6 @@ async function getMenuItems(): Promise<MenuItem[]> {
     .order('name', { ascending: true })
 
   if (error || !data || data.length === 0) {
-    // Fall back to MENU_ITEMS env var if set (legacy / dev)
     const envItems = process.env.MENU_ITEMS
     if (envItems) {
       try { return JSON.parse(envItems) as MenuItem[] } catch { /* ignore */ }
@@ -322,11 +321,14 @@ async function getMenuItems(): Promise<MenuItem[]> {
   }))
 }
 
-async function buildMenuText(): Promise<string> {
+/**
+ * Returns items in the exact same order they appear in the menu text
+ * (sorted by category position, then alphabetically within each category).
+ * Use this whenever you need to map a user's number selection to an item.
+ */
+async function getOrderedMenuItems(): Promise<MenuItem[]> {
   const items = await getMenuItems()
-  if (items.length === 0) return 'Menu not available. Please call us to order.'
 
-  // Group by category, preserving category position order
   const categoryMap = new Map<string, { position: number; items: MenuItem[] }>()
   for (const item of items) {
     const cat = item.category || 'Other'
@@ -335,7 +337,22 @@ async function buildMenuText(): Promise<string> {
     categoryMap.get(cat)!.items.push(item)
   }
 
-  // Sort categories by position
+  const sortedCategories = [...categoryMap.entries()].sort((a, b) => a[1].position - b[1].position)
+  return sortedCategories.flatMap(([, { items: catItems }]) => catItems)
+}
+
+async function buildMenuText(): Promise<string> {
+  const items = await getMenuItems()
+  if (items.length === 0) return 'Menu not available. Please call us to order.'
+
+  const categoryMap = new Map<string, { position: number; items: MenuItem[] }>()
+  for (const item of items) {
+    const cat = item.category || 'Other'
+    const pos = item.category_position ?? 999
+    if (!categoryMap.has(cat)) categoryMap.set(cat, { position: pos, items: [] })
+    categoryMap.get(cat)!.items.push(item)
+  }
+
   const sortedCategories = [...categoryMap.entries()].sort((a, b) => a[1].position - b[1].position)
 
   let counter = 1
