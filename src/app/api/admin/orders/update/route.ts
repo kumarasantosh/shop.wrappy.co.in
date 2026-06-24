@@ -127,7 +127,7 @@ export async function POST(req: Request) {
             `[Pidge] Order dispatched for #${String(data.id).slice(0, 8)} → pidge_id=${pidgeOrderId}`
           )
         } catch (err) {
-          console.error('[Pidge] Failed to create delivery order:', err)
+          console.error('[Pidge] Failed to create delivery order:', JSON.stringify(err, Object.getOwnPropertyNames(err)))
           // Log failure but never surface to admin UI
         }
       })()

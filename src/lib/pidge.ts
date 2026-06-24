@@ -81,6 +81,8 @@ export async function createPidgeOrder(
     throw new Error('PIDGE_USERNAME / PIDGE_PASSWORD are not set')
   }
 
+  // Pidge API: POST {base}/order/create
+  // base is set via PIDGE_API_BASE_URL, e.g. https://api.pidge.in/v1.0/store/channel/wrappy
   const res = await fetch(`${PIDGE_API_BASE}/order/create`, {
     method: 'POST',
     headers: pidgeHeaders(),
