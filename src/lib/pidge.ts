@@ -67,9 +67,9 @@ async function getToken(forceRefresh = false): Promise<string> {
   )
   console.log(`[Pidge] Login response ${res.status}:`, safeLog)
 
-  // Try common token field names
+  // data.token is the FULL Authorization header value: "Bearer eyJ..."
   const nested = (json.data as Record<string, unknown> | undefined) ?? {}
-  const token =
+  const rawToken =
     (nested.token as string) ||
     (nested.access_token as string) ||
     (nested.jwt as string) ||
@@ -77,22 +77,25 @@ async function getToken(forceRefresh = false): Promise<string> {
     (json.access_token as string) ||
     ''
 
-  if (!res.ok || !token) {
+  if (!res.ok || !rawToken) {
     throw new Error(
       `Pidge login failed ${res.status}: ${(json.message as string) || JSON.stringify(json)}`
     )
   }
 
-  _cachedToken = token
-  // Cache for 23 hours (JWTs are typically 24h)
+  // Pidge returns the full "Bearer eyJ..." string — store as-is
+  _cachedToken = rawToken
+  // Cache for 23 hours
   _tokenExpiresAt = Date.now() + 23 * 60 * 60 * 1000
-  return token
+  return rawToken
 }
 
 function authHeaders(token: string): Record<string, string> {
+  // Pidge login returns data.token = "Bearer eyJ..." (already includes the prefix).
+  // Use it directly as the Authorization header value.
   return {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
+    Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}`,
   }
 }
 
