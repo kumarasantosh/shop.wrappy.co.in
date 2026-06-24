@@ -3,7 +3,7 @@ import { requireAdmin } from '../../../../../lib/admin'
 import { supabaseAdmin } from '../../../../../lib/supabaseAdmin'
 import { sendWhatsAppTemplate } from '../../../../../lib/whatsapp'
 import { parseOrderMeta, appendOrderMeta } from '../../../../../lib/orderMeta'
-import { createPidgeOrder, getStorePickupInfo } from '../../../../../lib/pidge'
+import { createPidgeOrder } from '../../../../../lib/pidge'
 
 type Status =
   | 'placed'
@@ -74,43 +74,22 @@ export async function POST(req: Request) {
       // Fire-and-forget — never blocks the response
       ;(async () => {
         try {
-          const pickup = getStorePickupInfo()
-
-          // Customer drop details from order
           const customerPhone = String(data.phone || '').replace(/\D/g, '').slice(-10)
           const dropAddress = String(data.address || '').trim()
-
-          // Estimate package weight from item count (fallback)
           const itemCount = (data as any).order_items?.length ?? 1
-          const weightKg = Math.max(0.3, itemCount * 0.3)
 
           const pidgeRes = await createPidgeOrder({
-            channel_order_id: String(data.id),
-            pickup,
-            drop: {
-              name: 'Customer',
-              phone: customerPhone || pickup.phone,
-              address: dropAddress,
-              city: '',       // Pidge uses lat/lng when city is unknown
-              pincode: '',
-              latitude: meta.deliveryLat ?? undefined,
-              longitude: meta.deliveryLng ?? undefined,
-            },
-            package: {
-              dead_weight: weightKg,
-              breadth: 20,
-              height: 15,
-              length: 25,
-              package_description: `Wrappy food order #${String(data.id).slice(0, 8)}`,
-              invoice_value: Math.round(Number(data.total || 0)),
-            },
-            payment_mode: 'prepaid',
+            orderId: String(data.id),
+            customerName: 'Customer',
+            customerPhone,
+            deliveryAddress: dropAddress,
+            deliveryLat: meta.deliveryLat,
+            deliveryLng: meta.deliveryLng,
+            billAmount: Number(data.total || 0),
+            itemCount,
           })
 
-          // Persist the Pidge order ID in instructions so we can track it later
-          const pidgeOrderId = String(
-            pidgeRes.order_id || pidgeRes.id || ''
-          ).trim()
+          const pidgeOrderId = pidgeRes.pidgeId
 
           if (pidgeOrderId) {
             const updatedInstructions = appendOrderMeta(data.instructions, {

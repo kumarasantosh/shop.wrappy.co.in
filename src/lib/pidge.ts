@@ -1,137 +1,205 @@
 /**
  * Pidge last-mile delivery API client.
  *
- * Environment variables required:
- *   PIDGE_USERNAME         — Username from Pidge dashboard → Settings → Channel Integration
- *   PIDGE_PASSWORD         — Password/token from the same screen (Basic Auth)
- *   PIDGE_API_BASE_URL     — (optional) defaults to https://apiv2.pidge.in
+ * Auth: Bearer token — PIDGE_PASSWORD is used directly as the Bearer token.
+ * Base URL: https://api.pidge.in/v1.0/store/channel/vendor  ("vendor" is a literal path segment)
+ * Channel name ("API") goes in the request body, not the URL.
  *
- * Store pickup details:
- *   PIDGE_PICKUP_NAME      — Store / restaurant name
- *   PIDGE_PICKUP_PHONE     — Store contact phone
- *   PIDGE_PICKUP_ADDRESS   — Street address
- *   PIDGE_PICKUP_CITY      — City
- *   PIDGE_PICKUP_PINCODE   — PIN code
- *   STORE_LATITUDE         — Latitude  (also used for delivery fee quoting)
- *   STORE_LONGITUDE        — Longitude
- *
- * Webhook (optional):
- *   PIDGE_WEBHOOK_SECRET   — Shared secret Pidge sends in Authorization header
+ * Environment variables:
+ *   PIDGE_PASSWORD         — Bearer token (from Pidge dashboard → Channel Integration)
+ *   PIDGE_CHANNEL_NAME     — Channel name you set when generating the token (default: "API")
+ *   PIDGE_PICKUP_NAME      — Store name
+ *   PIDGE_PICKUP_PHONE     — Store phone
+ *   PIDGE_PICKUP_ADDRESS   — Store street address
+ *   PIDGE_PICKUP_CITY      — Store city
+ *   PIDGE_PICKUP_PINCODE   — Store PIN code
+ *   STORE_LATITUDE         — Store latitude
+ *   STORE_LONGITUDE        — Store longitude
+ *   PIDGE_WEBHOOK_SECRET   — Auth token Pidge sends in webhook Authorization header
  */
 
-const PIDGE_API_BASE = (process.env.PIDGE_API_BASE_URL || 'https://api.pidge.in/v1.0/store/channel/API').trim().replace(/\/+$/, '')
-const PIDGE_USERNAME = process.env.PIDGE_USERNAME || ''
-const PIDGE_PASSWORD = process.env.PIDGE_PASSWORD || ''
+const PIDGE_BASE = 'https://api.pidge.in/v1.0/store/channel/vendor'
+const PIDGE_TOKEN = (process.env.PIDGE_PASSWORD || '').trim()
+const PIDGE_CHANNEL = (process.env.PIDGE_CHANNEL_NAME || 'API').trim()
 
-export type PidgeDropInfo = {
-  name: string
-  phone: string
-  address: string
+const STORE_NAME    = process.env.PIDGE_PICKUP_NAME    || 'Wrappy'
+const STORE_PHONE   = process.env.PIDGE_PICKUP_PHONE   || ''
+const STORE_ADDRESS = process.env.PIDGE_PICKUP_ADDRESS || ''
+const STORE_CITY    = process.env.PIDGE_PICKUP_CITY    || 'Hyderabad'
+const STORE_PINCODE = process.env.PIDGE_PICKUP_PINCODE || ''
+const STORE_LAT     = Number(process.env.STORE_LATITUDE  || '0')
+const STORE_LNG     = Number(process.env.STORE_LONGITUDE || '0')
+
+function pidgeHeaders(): Record<string, string> {
+  if (!PIDGE_TOKEN) throw new Error('PIDGE_PASSWORD (bearer token) is not set')
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${PIDGE_TOKEN}`,
+  }
+}
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+type PidgeAddress = {
+  address_line_1: string
+  address_line_2?: string
   city?: string
+  state?: string
+  country?: string
   pincode?: string
   latitude?: number
   longitude?: number
 }
 
-export type PidgePackageInfo = {
-  dead_weight?: number   // kg
-  breadth?: number       // cm
-  height?: number        // cm
-  length?: number        // cm
-  package_description?: string
-  invoice_value?: number // INR
+type PidgePersonDetail = {
+  address: PidgeAddress
+  name: string
+  mobile: string
+  email?: string
 }
 
-export type PidgeCreateOrderPayload = {
-  /** Your internal order ID — Pidge echoes this in webhooks as channel_order_id */
-  channel_order_id: string
-  pickup: PidgeDropInfo
-  drop: PidgeDropInfo
-  package?: PidgePackageInfo
-  payment_mode?: 'prepaid' | 'cod'
+type PidgePackage = {
+  label?: string
+  quantity: number
+  dead_weight: number   // kg
+  length?: number       // cm
+  breadth?: number      // cm
+  height?: number       // cm
 }
 
-export type PidgeOrderResponse = {
-  order_id?: string
-  status?: string
-  message?: string
+type PidgeTrip = {
+  source_order_id: string
+  receiver_detail: PidgePersonDetail
+  packages: PidgePackage[]
+  bill_amount: number
+  cod_amount: number
+  order_category?: 'food' | 'parcel'
+}
+
+type PidgeCreatePayload = {
+  channel: string
+  sender_detail: PidgePersonDetail
+  poc_detail?: { name: string; mobile: string }
+  trips: PidgeTrip[]
+}
+
+export type PidgeCreateResult = {
+  pidgeId: string
+}
+
+export type PidgeOrderStatus = {
+  id: string
+  status: string
+  fulfillment?: {
+    status: string
+    logs?: Array<{ status: string; timestamp: string }>
+    rider?: { id: string; name: string; mobile: string }
+  }
   [key: string]: unknown
 }
 
-function pidgeHeaders(): Record<string, string> {
-  if (!PIDGE_USERNAME || !PIDGE_PASSWORD) {
-    throw new Error('PIDGE_USERNAME and PIDGE_PASSWORD must be set')
-  }
-  const basic = Buffer.from(`${PIDGE_USERNAME}:${PIDGE_PASSWORD}`).toString('base64')
-  return {
-    Authorization: `Basic ${basic}`,
-    'Content-Type': 'application/json',
-  }
-}
+// ── API calls ─────────────────────────────────────────────────────────────────
 
 /**
- * Create a new delivery order with Pidge.
- * Returns the Pidge response (contains order_id used for tracking).
- * Throws on API or network errors.
+ * Create a Pidge delivery order when the admin marks an order "out for delivery".
+ * Returns { pidgeId } which should be saved to the order for tracking.
  */
-export async function createPidgeOrder(
-  payload: PidgeCreateOrderPayload
-): Promise<PidgeOrderResponse> {
-  if (!PIDGE_USERNAME || !PIDGE_PASSWORD) {
-    throw new Error('PIDGE_USERNAME / PIDGE_PASSWORD are not set')
+export async function createPidgeOrder(params: {
+  orderId: string
+  customerName: string
+  customerPhone: string
+  deliveryAddress: string
+  deliveryLat?: number | null
+  deliveryLng?: number | null
+  billAmount: number
+  itemCount?: number
+}): Promise<PidgeCreateResult> {
+  const weightKg = Math.max(0.3, (params.itemCount ?? 1) * 0.3)
+
+  const payload: PidgeCreatePayload = {
+    channel: PIDGE_CHANNEL,
+    sender_detail: {
+      address: {
+        address_line_1: STORE_ADDRESS,
+        city: STORE_CITY,
+        state: 'Telangana',
+        country: 'India',
+        pincode: STORE_PINCODE,
+        ...(STORE_LAT && STORE_LNG ? { latitude: STORE_LAT, longitude: STORE_LNG } : {}),
+      },
+      name: STORE_NAME,
+      mobile: STORE_PHONE,
+    },
+    poc_detail: {
+      name: STORE_NAME,
+      mobile: STORE_PHONE,
+    },
+    trips: [
+      {
+        source_order_id: params.orderId,
+        receiver_detail: {
+          address: {
+            address_line_1: params.deliveryAddress,
+            ...(params.deliveryLat && params.deliveryLng
+              ? { latitude: params.deliveryLat, longitude: params.deliveryLng }
+              : {}),
+          },
+          name: params.customerName || 'Customer',
+          mobile: params.customerPhone,
+        },
+        packages: [
+          {
+            label: `Wrappy #${params.orderId.slice(0, 8)}`,
+            quantity: 1,
+            dead_weight: weightKg,
+            length: 25,
+            breadth: 20,
+            height: 15,
+          },
+        ],
+        bill_amount: Math.round(params.billAmount),
+        cod_amount: 0,
+        order_category: 'food',
+      },
+    ],
   }
 
-  // Pidge API: POST {base}/order/create
-  // base is set via PIDGE_API_BASE_URL, e.g. https://api.pidge.in/v1.0/store/channel/wrappy
-  const res = await fetch(`${PIDGE_API_BASE}/order/create`, {
+  const res = await fetch(`${PIDGE_BASE}/order`, {
     method: 'POST',
     headers: pidgeHeaders(),
     body: JSON.stringify(payload),
   })
 
-  const data = (await res.json()) as PidgeOrderResponse
-  if (!res.ok) {
-    throw new Error(
-      String(data?.message || `Pidge API error ${res.status}`)
-    )
+  const json = await res.json() as { data?: Record<string, string>; message?: string }
+
+  if (!res.ok || !json.data) {
+    throw new Error(`Pidge ${res.status}: ${json.message || JSON.stringify(json)}`)
   }
-  return data
+
+  // Response: { data: { [source_order_id]: pidge_id } }
+  const pidgeId =
+    json.data[params.orderId] ??
+    Object.values(json.data)[0] ??
+    ''
+
+  if (!pidgeId) throw new Error('Pidge returned no order ID in response')
+
+  return { pidgeId }
 }
 
 /**
- * Fetch status of an existing Pidge order.
+ * Fetch current status of a Pidge order by its Pidge-assigned ID.
  */
-export async function getPidgeOrderStatus(
-  pidgeOrderId: string
-): Promise<PidgeOrderResponse> {
-  if (!PIDGE_USERNAME || !PIDGE_PASSWORD) {
-    throw new Error('PIDGE_USERNAME / PIDGE_PASSWORD are not set')
-  }
-
-  const res = await fetch(`${PIDGE_API_BASE}/order/${encodeURIComponent(pidgeOrderId)}`, {
+export async function getPidgeOrderStatus(pidgeId: string): Promise<PidgeOrderStatus> {
+  const res = await fetch(`${PIDGE_BASE}/order/${encodeURIComponent(pidgeId)}`, {
     headers: pidgeHeaders(),
   })
 
-  const data = (await res.json()) as PidgeOrderResponse
-  if (!res.ok) {
-    throw new Error(
-      String(data?.message || `Pidge API error ${res.status}`)
-    )
-  }
-  return data
-}
+  const json = await res.json() as { data?: PidgeOrderStatus; message?: string }
 
-/**
- * Build the pickup location from env vars (your store).
- */
-export function getStorePickupInfo(): PidgeDropInfo {
-  return {
-    name: process.env.PIDGE_PICKUP_NAME || 'Wrappy Store',
-    phone: process.env.PIDGE_PICKUP_PHONE || '',
-    address: process.env.PIDGE_PICKUP_ADDRESS || '',
-    city: process.env.PIDGE_PICKUP_CITY || '',
-    pincode: process.env.PIDGE_PICKUP_PINCODE || '',
-    latitude: Number(process.env.STORE_LATITUDE) || undefined,
-    longitude: Number(process.env.STORE_LONGITUDE) || undefined,
+  if (!res.ok || !json.data) {
+    throw new Error(`Pidge GET ${res.status}: ${json.message || JSON.stringify(json)}`)
   }
+
+  return json.data
 }
