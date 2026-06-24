@@ -107,7 +107,7 @@ export async function getPidgeOrderStatus(
   }
 
   const res = await fetch(`${PIDGE_API_BASE}/order/${encodeURIComponent(pidgeOrderId)}`, {
-    headers: { Authorization: `Bearer ${PIDGE_API_TOKEN}` },
+    headers: pidgeHeaders(),
   })
 
   const data = (await res.json()) as PidgeOrderResponse
