@@ -214,7 +214,11 @@ export async function createPidgeOrder(params: {
         source_order_id: params.orderId,
         receiver_detail: {
           address: {
-            address_line_1: params.deliveryAddress,
+            address_line_1: params.deliveryAddress || 'Hyderabad',
+            city: 'Hyderabad',
+            state: 'Telangana',
+            country: 'India',
+            pincode: '500085',
             ...(params.deliveryLat && params.deliveryLng
               ? { latitude: params.deliveryLat, longitude: params.deliveryLng }
               : {}),
