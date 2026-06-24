@@ -19,7 +19,7 @@
  *   PIDGE_WEBHOOK_SECRET   — Shared secret Pidge sends in Authorization header
  */
 
-const PIDGE_API_BASE = (process.env.PIDGE_API_BASE_URL || 'https://apiv2.pidge.in').replace(/\/$/, '')
+const PIDGE_API_BASE = (process.env.PIDGE_API_BASE_URL || 'https://api.pidge.in/v1.0/store/channel/API').trim().replace(/\/+$/, '')
 const PIDGE_USERNAME = process.env.PIDGE_USERNAME || ''
 const PIDGE_PASSWORD = process.env.PIDGE_PASSWORD || ''
 
