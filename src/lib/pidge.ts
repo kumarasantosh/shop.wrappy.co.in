@@ -1,26 +1,31 @@
 /**
  * Pidge last-mile delivery API client.
  *
- * Auth: Bearer token — PIDGE_PASSWORD is used directly as the Bearer token.
+ * Auth flow: POST /vendor/login with username+password → get JWT → use as Bearer token.
+ * The JWT is cached in module scope for the lifetime of a serverless invocation.
+ * On 401, the client re-logs in once and retries.
+ *
  * Base URL: https://api.pidge.in/v1.0/store/channel/vendor  ("vendor" is a literal path segment)
  * Channel name ("API") goes in the request body, not the URL.
  *
  * Environment variables:
- *   PIDGE_PASSWORD         — Bearer token (from Pidge dashboard → Channel Integration)
- *   PIDGE_CHANNEL_NAME     — Channel name you set when generating the token (default: "API")
- *   PIDGE_PICKUP_NAME      — Store name
- *   PIDGE_PICKUP_PHONE     — Store phone
- *   PIDGE_PICKUP_ADDRESS   — Store street address
- *   PIDGE_PICKUP_CITY      — Store city
- *   PIDGE_PICKUP_PINCODE   — Store PIN code
- *   STORE_LATITUDE         — Store latitude
- *   STORE_LONGITUDE        — Store longitude
- *   PIDGE_WEBHOOK_SECRET   — Auth token Pidge sends in webhook Authorization header
+ *   PIDGE_USERNAME     — Username from Pidge dashboard → Channel Integration
+ *   PIDGE_PASSWORD     — Password from Pidge dashboard → Channel Integration
+ *   PIDGE_CHANNEL_NAME — Channel name set when generating token (default: "API")
+ *   PIDGE_PICKUP_NAME  — Store name
+ *   PIDGE_PICKUP_PHONE — Store phone (10 digits)
+ *   PIDGE_PICKUP_ADDRESS — Store street address
+ *   PIDGE_PICKUP_CITY  — Store city
+ *   PIDGE_PICKUP_PINCODE — Store PIN code
+ *   STORE_LATITUDE     — Store latitude
+ *   STORE_LONGITUDE    — Store longitude
+ *   PIDGE_WEBHOOK_SECRET — Auth token Pidge sends in webhook Authorization header
  */
 
-const PIDGE_BASE = 'https://api.pidge.in/v1.0/store/channel/vendor'
-const PIDGE_TOKEN = (process.env.PIDGE_PASSWORD || '').trim()
-const PIDGE_CHANNEL = (process.env.PIDGE_CHANNEL_NAME || 'API').trim()
+const PIDGE_BASE     = 'https://api.pidge.in/v1.0/store/channel/vendor'
+const PIDGE_USERNAME = (process.env.PIDGE_USERNAME || '').trim()
+const PIDGE_PASSWORD = (process.env.PIDGE_PASSWORD || '').trim()
+const PIDGE_CHANNEL  = (process.env.PIDGE_CHANNEL_NAME || 'API').trim()
 
 const STORE_NAME    = process.env.PIDGE_PICKUP_NAME    || 'Wrappy'
 const STORE_PHONE   = process.env.PIDGE_PICKUP_PHONE   || ''
@@ -30,11 +35,57 @@ const STORE_PINCODE = process.env.PIDGE_PICKUP_PINCODE || ''
 const STORE_LAT     = Number(process.env.STORE_LATITUDE  || '0')
 const STORE_LNG     = Number(process.env.STORE_LONGITUDE || '0')
 
-function pidgeHeaders(): Record<string, string> {
-  if (!PIDGE_TOKEN) throw new Error('PIDGE_PASSWORD (bearer token) is not set')
+// ── Token cache (module-level, valid for the lifetime of a serverless instance) ──
+let _cachedToken: string | null = null
+let _tokenExpiresAt = 0  // epoch ms
+
+async function getToken(forceRefresh = false): Promise<string> {
+  if (!forceRefresh && _cachedToken && Date.now() < _tokenExpiresAt) {
+    return _cachedToken
+  }
+
+  if (!PIDGE_USERNAME || !PIDGE_PASSWORD) {
+    throw new Error('PIDGE_USERNAME and PIDGE_PASSWORD must be set')
+  }
+
+  const res = await fetch(`${PIDGE_BASE}/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: PIDGE_USERNAME, password: PIDGE_PASSWORD }),
+  })
+
+  const json = await res.json() as {
+    data?: { token?: string; access_token?: string; jwt?: string }
+    token?: string
+    access_token?: string
+    message?: string
+  }
+
+  // Try common token field names
+  const token =
+    json.data?.token ||
+    json.data?.access_token ||
+    json.data?.jwt ||
+    json.token ||
+    json.access_token ||
+    ''
+
+  if (!res.ok || !token) {
+    throw new Error(
+      `Pidge login failed ${res.status}: ${json.message || JSON.stringify(json)}`
+    )
+  }
+
+  _cachedToken = token
+  // Cache for 23 hours (JWTs are typically 24h)
+  _tokenExpiresAt = Date.now() + 23 * 60 * 60 * 1000
+  return token
+}
+
+function authHeaders(token: string): Record<string, string> {
   return {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${PIDGE_TOKEN}`,
+    Authorization: `Bearer ${token}`,
   }
 }
 
@@ -42,7 +93,6 @@ function pidgeHeaders(): Record<string, string> {
 
 type PidgeAddress = {
   address_line_1: string
-  address_line_2?: string
   city?: string
   state?: string
   country?: string
@@ -55,16 +105,15 @@ type PidgePersonDetail = {
   address: PidgeAddress
   name: string
   mobile: string
-  email?: string
 }
 
 type PidgePackage = {
   label?: string
   quantity: number
-  dead_weight: number   // kg
-  length?: number       // cm
-  breadth?: number      // cm
-  height?: number       // cm
+  dead_weight: number
+  length?: number
+  breadth?: number
+  height?: number
 }
 
 type PidgeTrip = {
@@ -83,9 +132,7 @@ type PidgeCreatePayload = {
   trips: PidgeTrip[]
 }
 
-export type PidgeCreateResult = {
-  pidgeId: string
-}
+export type PidgeCreateResult = { pidgeId: string }
 
 export type PidgeOrderStatus = {
   id: string
@@ -98,11 +145,32 @@ export type PidgeOrderStatus = {
   [key: string]: unknown
 }
 
-// ── API calls ─────────────────────────────────────────────────────────────────
+// ── API helpers ──────────────────────────────────────────────────────────────
+
+async function pidgeFetch(
+  url: string,
+  options: RequestInit,
+  retry = true
+): Promise<Response> {
+  const token = await getToken()
+  const res = await fetch(url, {
+    ...options,
+    headers: { ...authHeaders(token), ...(options.headers as Record<string, string> || {}) },
+  })
+
+  // On 401 refresh token once and retry
+  if (res.status === 401 && retry) {
+    _cachedToken = null
+    return pidgeFetch(url, options, false)
+  }
+
+  return res
+}
+
+// ── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Create a Pidge delivery order when the admin marks an order "out for delivery".
- * Returns { pidgeId } which should be saved to the order for tracking.
+ * Create a Pidge delivery order when admin marks an order "out for delivery".
  */
 export async function createPidgeOrder(params: {
   orderId: string
@@ -130,10 +198,7 @@ export async function createPidgeOrder(params: {
       name: STORE_NAME,
       mobile: STORE_PHONE,
     },
-    poc_detail: {
-      name: STORE_NAME,
-      mobile: STORE_PHONE,
-    },
+    poc_detail: { name: STORE_NAME, mobile: STORE_PHONE },
     trips: [
       {
         source_order_id: params.orderId,
@@ -164,9 +229,8 @@ export async function createPidgeOrder(params: {
     ],
   }
 
-  const res = await fetch(`${PIDGE_BASE}/order`, {
+  const res = await pidgeFetch(`${PIDGE_BASE}/order`, {
     method: 'POST',
-    headers: pidgeHeaders(),
     body: JSON.stringify(payload),
   })
 
@@ -184,6 +248,7 @@ export async function createPidgeOrder(params: {
 
   if (!pidgeId) throw new Error('Pidge returned no order ID in response')
 
+  console.log(`[Pidge] Order created: source=${params.orderId} pidge_id=${pidgeId}`)
   return { pidgeId }
 }
 
@@ -191,8 +256,8 @@ export async function createPidgeOrder(params: {
  * Fetch current status of a Pidge order by its Pidge-assigned ID.
  */
 export async function getPidgeOrderStatus(pidgeId: string): Promise<PidgeOrderStatus> {
-  const res = await fetch(`${PIDGE_BASE}/order/${encodeURIComponent(pidgeId)}`, {
-    headers: pidgeHeaders(),
+  const res = await pidgeFetch(`${PIDGE_BASE}/order/${encodeURIComponent(pidgeId)}`, {
+    method: 'GET',
   })
 
   const json = await res.json() as { data?: PidgeOrderStatus; message?: string }
