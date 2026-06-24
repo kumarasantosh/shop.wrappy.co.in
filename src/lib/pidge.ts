@@ -54,25 +54,32 @@ async function getToken(forceRefresh = false): Promise<string> {
     body: JSON.stringify({ username: PIDGE_USERNAME, password: PIDGE_PASSWORD }),
   })
 
-  const json = await res.json() as {
-    data?: { token?: string; access_token?: string; jwt?: string }
-    token?: string
-    access_token?: string
-    message?: string
+  let json: Record<string, unknown>
+  try {
+    json = await res.json()
+  } catch {
+    throw new Error(`Pidge login ${res.status}: non-JSON response`)
   }
 
+  // Log full login response (redact token value) so we can debug field names
+  const safeLog = JSON.stringify(json, (k, v) =>
+    typeof v === 'string' && v.length > 10 ? v.slice(0, 6) + '…' : v
+  )
+  console.log(`[Pidge] Login response ${res.status}:`, safeLog)
+
   // Try common token field names
+  const nested = (json.data as Record<string, unknown> | undefined) ?? {}
   const token =
-    json.data?.token ||
-    json.data?.access_token ||
-    json.data?.jwt ||
-    json.token ||
-    json.access_token ||
+    (nested.token as string) ||
+    (nested.access_token as string) ||
+    (nested.jwt as string) ||
+    (json.token as string) ||
+    (json.access_token as string) ||
     ''
 
   if (!res.ok || !token) {
     throw new Error(
-      `Pidge login failed ${res.status}: ${json.message || JSON.stringify(json)}`
+      `Pidge login failed ${res.status}: ${(json.message as string) || JSON.stringify(json)}`
     )
   }
 
