@@ -6,14 +6,30 @@ import { useUser } from '@clerk/nextjs'
 import OSMAddressPicker from '../../components/OSMAddressPicker'
 import { useCartStore } from '../../store/cart'
 import { AddressRecord, CustomerPhoneRecord } from '../../lib/types'
-// Delivery is disabled — stub out the radius helpers so the file compiles.
-const MAX_DELIVERY_DISTANCE_KM = 10
+const MAX_DELIVERY_DISTANCE_KM = Number(process.env.NEXT_PUBLIC_MAX_DELIVERY_KM || '10')
+
 async function isWithinDeliveryRadius(
-  _lat: number,
-  _lng: number,
-  _max?: number
+  lat: number,
+  lng: number,
+  max: number = MAX_DELIVERY_DISTANCE_KM
 ): Promise<{ distanceKm: number; withinRange: boolean; method: 'haversine' | 'driving' }> {
-  return { distanceKm: 0, withinRange: true, method: 'haversine' }
+  const storeLat = Number(process.env.NEXT_PUBLIC_STORE_LATITUDE || '0')
+  const storeLng = Number(process.env.NEXT_PUBLIC_STORE_LONGITUDE || '0')
+
+  if (!storeLat || !storeLng) {
+    return { distanceKm: 0, withinRange: true, method: 'haversine' }
+  }
+
+  const dLat = ((lat - storeLat) * Math.PI) / 180
+  const dLng = ((lng - storeLng) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((storeLat * Math.PI) / 180) *
+    Math.cos((lat * Math.PI) / 180) *
+    Math.sin(dLng / 2) ** 2
+  const distanceKm = 6371 * 2 * Math.asin(Math.sqrt(Math.min(1, a)))
+
+  return { distanceKm, withinRange: distanceKm <= max, method: 'haversine' }
 }
 
 const TAX_RATE = 0.05
@@ -1123,17 +1139,19 @@ export default function CheckoutPage() {
           <div>
             <label className="mb-2 block text-sm text-gray-500">Order Type</label>
             <div className="grid grid-cols-2 gap-3">
-              <div
-                className="relative overflow-hidden rounded-xl border border-white/10 bg-[#222] px-4 py-4 opacity-50 cursor-not-allowed"
+              <button
+                type="button"
+                onClick={() => setOrderType('delivery')}
+                className={`rounded-xl border px-4 py-4 transition-all ${orderType === 'delivery'
+                  ? 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
+                  : 'border-white/10 bg-[#222]'
+                  }`}
               >
-                <div className="absolute -right-7 top-2 rotate-45 bg-gray-600 px-8 py-0.5 text-[9px] font-bold uppercase tracking-wider text-gray-300">
-                  Soon
-                </div>
                 <div className="flex flex-col items-center gap-1.5">
-                  <span className="text-2xl grayscale">🚚</span>
-                  <span className="text-sm font-medium text-gray-500">Delivery</span>
+                  <span className="text-2xl">🚚</span>
+                  <span className={`text-sm font-medium ${orderType === 'delivery' ? 'text-emerald-300' : 'text-white'}`}>Delivery</span>
                 </div>
-              </div>
+              </button>
               <button
                 type="button"
                 onClick={() => setOrderType('pickup')}
