@@ -50,11 +50,9 @@ type CheckoutDraftPayload = {
   coupon_code: string | null
   coupon_id: string | null
   payment_method: 'razorpay'
-  order_type: 'delivery' | 'pickup'
+  order_type: 'pickup'
   pickup_slot: string | null
   pickup_code: string | null
-  delivery_lat: number | null
-  delivery_lng: number | null
   razorpay_order_id: string
 }
 
@@ -139,7 +137,6 @@ export async function POST(req: Request) {
     const body = (await req.json()) as {
       items?: ItemPayload[]
       phone?: string
-      address?: string
       instructions?: string
       couponCode?: string
       paymentMethod?: 'razorpay'
@@ -147,12 +144,12 @@ export async function POST(req: Request) {
       pickupSlot?: string
       pickupSlotTimezoneOffsetMinutes?: number
       includePacking?: boolean
-      latitude?: number
-      longitude?: number
     }
 
-    const isPickup = !body.orderType || body.orderType === 'pickup'
-    const orderType: 'delivery' | 'pickup' = isPickup ? 'pickup' : 'delivery'
+    // Pickup only — delivery is disabled
+    if (body.orderType && body.orderType !== 'pickup') {
+      return NextResponse.json({ error: 'delivery_not_available' }, { status: 400 })
+    }
 
     const items = body.items || []
     if (items.length === 0) {
@@ -203,44 +200,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'phone_required' }, { status: 400 })
     }
 
-    // Delivery-specific validation
-    let deliveryAddress = 'Self Pickup at Store'
-    let deliveryLat: number | null = null
-    let deliveryLng: number | null = null
-
-    if (!isPickup) {
-      const rawAddress = String(body.address || '').trim()
-      if (!rawAddress) {
-        return NextResponse.json({ error: 'address_required' }, { status: 400 })
-      }
-      const rawLat = Number(body.latitude)
-      const rawLng = Number(body.longitude)
-      if (!Number.isFinite(rawLat) || !Number.isFinite(rawLng)) {
-        return NextResponse.json({ error: 'coordinates_required' }, { status: 400 })
-      }
-      deliveryAddress = rawAddress
-      deliveryLat = rawLat
-      deliveryLng = rawLng
+    const slotDate = parsePickupSlotToDate(
+      body.pickupSlot,
+      body.pickupSlotTimezoneOffsetMinutes
+    )
+    if (!slotDate) {
+      return NextResponse.json({ error: 'pickup_slot_required' }, { status: 400 })
     }
 
-    // Pickup-specific validation
-    let pickupSlotIso: string | null = null
-    let pickupCode: string | null = null
-
-    if (isPickup) {
-      const slotDate = parsePickupSlotToDate(
-        body.pickupSlot,
-        body.pickupSlotTimezoneOffsetMinutes
-      )
-      if (!slotDate) {
-        return NextResponse.json({ error: 'pickup_slot_required' }, { status: 400 })
-      }
-      if (slotDate.getTime() < Date.now() - 60_000) {
-        return NextResponse.json({ error: 'pickup_slot_in_past' }, { status: 400 })
-      }
-      pickupSlotIso = slotDate.toISOString()
-      pickupCode = generatePickupVerificationCode()
+    if (slotDate.getTime() < Date.now() - 60_000) {
+      return NextResponse.json({ error: 'pickup_slot_in_past' }, { status: 400 })
     }
+
+    const pickupSlotIso = slotDate.toISOString()
+    const pickupCode = generatePickupVerificationCode()
 
     if (body.paymentMethod && body.paymentMethod !== 'razorpay') {
       return NextResponse.json({ error: 'payment_method_not_supported' }, { status: 400 })
@@ -273,10 +246,8 @@ export async function POST(req: Request) {
       items.map((item) => ({ id: item.id, price: item.price, qty: item.qty }))
     )
     const totalItemCount = items.reduce((sum, item) => sum + Number(item.qty || 0), 0)
-    // Delivery always includes packing; pickup respects user preference
     const includePackingForPickup = body.includePacking !== false
-    const packingFee =
-      !isPickup || includePackingForPickup ? totalItemCount * PACKING_FEE_PER_ITEM : 0
+    const packingFee = includePackingForPickup ? totalItemCount * PACKING_FEE_PER_ITEM : 0
     const firstOrder = hasSupabase
       ? await isFirstOrderCustomer(userId, undefined)
       : true
@@ -316,48 +287,18 @@ export async function POST(req: Request) {
 
     const discountedSubtotal = Math.max(0, subtotal - discountAmount)
     const tax = Math.round(discountedSubtotal * TAX_RATE)
-
-    // For delivery: fetch a server-side fee quote (same logic as /api/delivery/quote)
-    let deliveryFee = 0
-    if (!isPickup && deliveryLat !== null && deliveryLng !== null) {
-      const STORE_LAT = Number(process.env.STORE_LATITUDE || '0')
-      const STORE_LNG = Number(process.env.STORE_LONGITUDE || '0')
-      const BASE_FEE = Number(process.env.DELIVERY_BASE_FEE || '40')
-      const FEE_PER_KM = Number(process.env.DELIVERY_FEE_PER_KM || '10')
-      const FREE_ABOVE = Number(process.env.FREE_DELIVERY_ABOVE || '0')
-
-      if (FREE_ABOVE > 0 && discountedSubtotal >= FREE_ABOVE) {
-        deliveryFee = 0
-      } else if (STORE_LAT && STORE_LNG) {
-        const dLat = ((deliveryLat - STORE_LAT) * Math.PI) / 180
-        const dLng = ((deliveryLng - STORE_LNG) * Math.PI) / 180
-        const a =
-          Math.sin(dLat / 2) ** 2 +
-          Math.cos((STORE_LAT * Math.PI) / 180) *
-          Math.cos((deliveryLat * Math.PI) / 180) *
-          Math.sin(dLng / 2) ** 2
-        const distKm = 6371 * 2 * Math.asin(Math.sqrt(Math.min(1, a)))
-        deliveryFee = Math.round(Math.max(BASE_FEE, BASE_FEE + Math.max(0, distKm - 1) * FEE_PER_KM))
-      } else {
-        deliveryFee = Number(process.env.DELIVERY_BASE_FEE || '40')
-      }
-    }
-
+    const deliveryFee = 0
     const total = discountedSubtotal + tax + packingFee + deliveryFee
 
-    const etaInfo = isPickup && pickupSlotIso
-      ? {
-          eta: pickupSlotIso,
-          etaMinutes: Math.max(1, Math.ceil((new Date(pickupSlotIso).getTime() - Date.now()) / 60000)),
-        }
-      : computeEta(settings)
+    const etaInfo = {
+      eta: pickupSlotIso,
+      etaMinutes: Math.max(1, Math.ceil((new Date(pickupSlotIso).getTime() - Date.now()) / 60000)),
+    }
 
     const fullInstructions = appendOrderMeta(body.instructions, {
-      orderType,
+      orderType: 'pickup',
       pickupSlot: pickupSlotIso,
       pickupCode,
-      deliveryLat,
-      deliveryLng,
     })
 
     const rzp = new Razorpay({ key_id: KEY_ID, key_secret: KEY_SECRET })
@@ -386,17 +327,15 @@ export async function POST(req: Request) {
       total,
       eta: etaInfo.eta,
       estimated_delivery_minutes: etaInfo.etaMinutes,
-      address: isPickup ? 'Self Pickup at Store' : deliveryAddress,
+      address: 'Self Pickup at Store',
       phone: phone || null,
       instructions: fullInstructions || null,
       coupon_code: appliedCoupon?.code || null,
       coupon_id: appliedCoupon?.id || null,
       payment_method: paymentMethod,
-      order_type: orderType,
+      order_type: 'pickup',
       pickup_slot: pickupSlotIso,
       pickup_code: pickupCode,
-      delivery_lat: deliveryLat,
-      delivery_lng: deliveryLng,
       razorpay_order_id: rzpOrder.id,
     }
     const draftToken = signCheckoutDraftToken(draftPayload, CHECKOUT_DRAFT_SECRET)
@@ -417,7 +356,7 @@ export async function POST(req: Request) {
       rzpOrder,
       key_id: KEY_ID,
       draftToken,
-      orderType,
+      orderType: 'pickup',
       pickupSlot: pickupSlotIso,
       deliveryFee,
       total,

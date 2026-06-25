@@ -42,8 +42,6 @@ type CheckoutDraftPayload = {
   order_type: 'delivery' | 'pickup'
   pickup_slot: string | null
   pickup_code: string | null
-  delivery_lat: number | null
-  delivery_lng: number | null
   razorpay_order_id: string
 }
 
