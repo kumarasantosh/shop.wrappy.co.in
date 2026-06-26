@@ -14,7 +14,6 @@ import {
   sendMenu,
   sendItemSelected,
   sendAddressRequest,
-  sendOrderSummary,
   sendPaymentLink,
   sendWhatsAppText,
 } from '../../../../lib/whatsapp'
@@ -265,7 +264,7 @@ async function handleInbound(body: Record<string, unknown>) {
           total,
           order_id: orderId,
         })
-        await sendOrderSummary(phone, updatedSession)
+        await sendCartSummary(phone, updatedSession)
         break
       }
 
@@ -283,10 +282,10 @@ async function handleInbound(body: Record<string, unknown>) {
           })
           await sendPaymentLink(phone, updatedSession, paymentUrl)
         } else if (payload === 'EDIT_ORDER' || input === 'EDIT') {
-          await updateSession(phone, { state: 'AWAITING_ITEM' })
-          await sendMenu(phone)
+          await updateSession(phone, { state: 'AWAITING_ITEM', cart: [] })
+          await sendWhatsAppText(phone, await buildMenuText())
         } else {
-          await sendOrderSummary(phone, session)
+          await sendCartSummary(phone, session)
         }
         break
       }
@@ -427,4 +426,28 @@ async function buildMenuText(): Promise<string> {
   }
 
   return `*Our Menu 🍽️*\n\n${sections.join('\n\n')}\n\nReply with item number to order. Type *DONE* when finished.`
+}
+
+async function sendCartSummary(
+  phone: string,
+  session: {
+    name?: string
+    cart?: CartItem[]
+    subtotal?: number
+    delivery_charge?: number
+    total?: number
+    address?: string
+  }
+): Promise<void> {
+  const cart = session.cart || []
+  const itemLines = cart.map((c) => `• ${c.name} x${c.qty} — ₹${c.price * c.qty}`).join('\n')
+  const msg =
+    `*Order Summary* 📋\n\n` +
+    `${itemLines}\n\n` +
+    `Subtotal: ₹${session.subtotal ?? 0}\n` +
+    `Delivery: ₹${session.delivery_charge ?? 0}\n` +
+    `*Total: ₹${session.total ?? 0}*\n\n` +
+    `📍 *Delivery Address:*\n${session.address || ''}\n\n` +
+    `Reply *CONFIRM* to place order or *EDIT* to change items.`
+  await sendWhatsAppText(phone, msg)
 }
