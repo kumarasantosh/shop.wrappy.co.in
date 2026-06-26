@@ -382,7 +382,7 @@ async function sendTemplate(
     type: 'template',
     template: {
       name: templateName,
-      language: { code: 'en_US' },
+      language: { code: 'en' },
       components,
     },
   }
@@ -414,22 +414,9 @@ export async function sendWelcomeGreeting(phone: string, name: string): Promise<
   ])
 }
 
-/** T2 — wrappy_menu: catalog template — opens the WhatsApp catalog */
+/** T2 — menu_wrappy: catalog template — opens the WhatsApp catalog */
 export async function sendMenu(phone: string, _menuText?: string): Promise<void> {
-  const thumbnailId = process.env.WHATSAPP_CATALOG_THUMBNAIL_ID || ''
-  return sendTemplate(phone, 'wrappy_menu', [
-    {
-      type: 'button',
-      sub_type: 'catalog',
-      index: '0',
-      parameters: [
-        {
-          type: 'action',
-          action: { thumbnail_product_retailer_id: thumbnailId },
-        },
-      ],
-    },
-  ])
+  return sendTemplate(phone, 'menu_wrappy', [])
 }
 
 /** T3 — order_item_selected: sent when customer picks an item number */
