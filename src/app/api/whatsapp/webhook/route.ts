@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   sendWelcomeGreeting,
+  sendMenu,
   sendItemSelected,
   sendAddressRequest,
   sendOrderSummary,
@@ -123,7 +124,7 @@ async function handleInbound(body: Record<string, unknown>) {
       case 'AWAITING_MENU': {
         if (input === 'MENU' || input === 'VIEW MENU' || payloadNorm === 'VIEW_MENU') {
           await updateSession(phone, { state: 'AWAITING_ITEM' })
-          await sendWhatsAppText(phone, await buildMenuText())
+          await sendMenu(phone, await buildMenuText())
         } else {
           // Any other input (including HI/HELLO) re-sends the welcome
           await sendWelcomeGreeting(phone, session.name || profileName)
@@ -133,14 +134,14 @@ async function handleInbound(body: Record<string, unknown>) {
 
       case 'AWAITING_ITEM': {
         if (input === 'MENU' || input === 'VIEW MENU' || payloadNorm === 'VIEW_MENU') {
-          await sendWhatsAppText(phone, await buildMenuText())
+          await sendMenu(phone, await buildMenuText())
           break
         }
         if (input === 'DONE' || input === 'ORDER') {
           const cart = session.cart || []
           if (cart.length === 0) {
             await sendWhatsAppText(phone, 'Your cart is empty. Please select an item.')
-            await sendWhatsAppText(phone, await buildMenuText())
+            await sendMenu(phone, await buildMenuText())
             break
           }
           await updateSession(phone, { state: 'AWAITING_LOCATION' })
@@ -265,7 +266,7 @@ async function handleInbound(body: Record<string, unknown>) {
       case 'ORDER_CONFIRMED': {
         if (input === 'MENU' || input === 'VIEW MENU' || input === 'ORDER' || payloadNorm === 'VIEW_MENU') {
           await updateSession(phone, { state: 'AWAITING_ITEM' })
-          await sendWhatsAppText(phone, await buildMenuText())
+          await sendMenu(phone, await buildMenuText())
         } else {
           await sendWelcomeGreeting(phone, session.name || profileName)
         }

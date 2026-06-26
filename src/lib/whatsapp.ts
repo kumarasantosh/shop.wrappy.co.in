@@ -414,9 +414,9 @@ export async function sendWelcomeGreeting(phone: string, name: string): Promise<
   ])
 }
 
-/** T2 — restaurant_menu: both {{header_text}} and {{menu_body}} are in the body */
+/** T2 — menu_wrappy: both {{header_text}} and {{menu_body}} are in the body */
 export async function sendMenu(phone: string, menuText: string): Promise<void> {
-  return sendTemplate(phone, 'restaurant_menu', [
+  return sendTemplate(phone, 'menu_wrappy', [
     {
       type: 'body',
       parameters: [

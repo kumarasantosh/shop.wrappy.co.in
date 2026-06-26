@@ -15,6 +15,7 @@ import {
 } from '../../../../lib/orderMeta'
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin'
 import { CouponRecord, ProductAddon, StoreSettingsRecord } from '../../../../lib/types'
+import { calculateOrder, BorzoError } from '../../../../lib/borzo'
 
 const TAX_RATE = 0.05
 const PACKING_FEE_PER_ITEM = 5
@@ -50,10 +51,13 @@ type CheckoutDraftPayload = {
   coupon_code: string | null
   coupon_id: string | null
   payment_method: 'razorpay'
-  order_type: 'pickup'
+  order_type: 'pickup' | 'delivery'
   pickup_slot: string | null
   pickup_code: string | null
   razorpay_order_id: string
+  // Delivery-only fields
+  dropoff_latitude: number | null
+  dropoff_longitude: number | null
 }
 
 function minutesUntilOpen(settings: StoreSettingsRecord, nowDate: Date = new Date()): number {
@@ -127,6 +131,50 @@ function parsePickupSlotToDate(
   return parsed
 }
 
+async function quoteBorzoDeliveryFee(
+  customerAddress: string,
+  customerLat: number,
+  customerLng: number,
+  phone: string
+): Promise<number> {
+  const storeLat = Number(process.env.STORE_LATITUDE || process.env.PORTER_PICKUP_LATITUDE || 0)
+  const storeLng = Number(process.env.STORE_LONGITUDE || process.env.PORTER_PICKUP_LONGITUDE || 0)
+
+  if (!storeLat || !storeLng) return 0
+
+  try {
+    const result = await calculateOrder({
+      type: 'standard',
+      matter: 'Food',
+      total_weight_kg: 1,
+      points: [
+        {
+          address: process.env.PORTER_PICKUP_ADDRESS || 'Wrappy, Kukatpally, Hyderabad',
+          latitude: storeLat,
+          longitude: storeLng,
+          contact_person: {
+            name: process.env.PORTER_PICKUP_NAME || 'Wrappy',
+            phone: process.env.PORTER_PICKUP_PHONE || '9182285342',
+          },
+        },
+        {
+          address: customerAddress || 'Customer Address',
+          latitude: customerLat,
+          longitude: customerLng,
+          contact_person: { name: 'Customer', phone: phone || '9000000000' },
+        },
+      ],
+    })
+
+    const order = result.order as Record<string, unknown>
+    return order?.payment_amount ? Math.round(Number(order.payment_amount)) : 0
+  } catch (err: unknown) {
+    const msg = err instanceof BorzoError ? err.message : String(err)
+    console.warn('[orders/create] Borzo quote failed, using fee=0:', msg)
+    return 0
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const { userId } = await auth()
@@ -137,6 +185,7 @@ export async function POST(req: Request) {
     const body = (await req.json()) as {
       items?: ItemPayload[]
       phone?: string
+      address?: string
       instructions?: string
       couponCode?: string
       paymentMethod?: 'razorpay'
@@ -144,12 +193,11 @@ export async function POST(req: Request) {
       pickupSlot?: string
       pickupSlotTimezoneOffsetMinutes?: number
       includePacking?: boolean
+      latitude?: number
+      longitude?: number
     }
 
-    // Pickup only — delivery is disabled
-    if (body.orderType && body.orderType !== 'pickup') {
-      return NextResponse.json({ error: 'delivery_not_available' }, { status: 400 })
-    }
+    const isPickup = !body.orderType || body.orderType === 'pickup'
 
     const items = body.items || []
     if (items.length === 0) {
@@ -200,20 +248,29 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'phone_required' }, { status: 400 })
     }
 
-    const slotDate = parsePickupSlotToDate(
-      body.pickupSlot,
-      body.pickupSlotTimezoneOffsetMinutes
-    )
-    if (!slotDate) {
-      return NextResponse.json({ error: 'pickup_slot_required' }, { status: 400 })
-    }
+    // ── Pickup slot validation (pickup only) ─────────────────────────────
+    let pickupSlotIso: string | null = null
+    let pickupCode: string | null = null
 
-    if (slotDate.getTime() < Date.now() - 60_000) {
-      return NextResponse.json({ error: 'pickup_slot_in_past' }, { status: 400 })
+    if (isPickup) {
+      const slotDate = parsePickupSlotToDate(
+        body.pickupSlot,
+        body.pickupSlotTimezoneOffsetMinutes
+      )
+      if (!slotDate) {
+        return NextResponse.json({ error: 'pickup_slot_required' }, { status: 400 })
+      }
+      if (slotDate.getTime() < Date.now() - 60_000) {
+        return NextResponse.json({ error: 'pickup_slot_in_past' }, { status: 400 })
+      }
+      pickupSlotIso = slotDate.toISOString()
+      pickupCode = generatePickupVerificationCode()
+    } else {
+      // Delivery: require customer coordinates
+      if (!body.latitude || !body.longitude) {
+        return NextResponse.json({ error: 'delivery_coordinates_required' }, { status: 400 })
+      }
     }
-
-    const pickupSlotIso = slotDate.toISOString()
-    const pickupCode = generatePickupVerificationCode()
 
     if (body.paymentMethod && body.paymentMethod !== 'razorpay') {
       return NextResponse.json({ error: 'payment_method_not_supported' }, { status: 400 })
@@ -246,8 +303,8 @@ export async function POST(req: Request) {
       items.map((item) => ({ id: item.id, price: item.price, qty: item.qty }))
     )
     const totalItemCount = items.reduce((sum, item) => sum + Number(item.qty || 0), 0)
-    const includePackingForPickup = body.includePacking !== false
-    const packingFee = includePackingForPickup ? totalItemCount * PACKING_FEE_PER_ITEM : 0
+    const includePacking = body.includePacking !== false
+    const packingFee = includePacking ? totalItemCount * PACKING_FEE_PER_ITEM : 0
     const firstOrder = hasSupabase
       ? await isFirstOrderCustomer(userId, undefined)
       : true
@@ -287,19 +344,44 @@ export async function POST(req: Request) {
 
     const discountedSubtotal = Math.max(0, subtotal - discountAmount)
     const tax = Math.round(discountedSubtotal * TAX_RATE)
-    const deliveryFee = 0
-    const total = discountedSubtotal + tax + packingFee + deliveryFee
 
-    const etaInfo = {
-      eta: pickupSlotIso,
-      etaMinutes: Math.max(1, Math.ceil((new Date(pickupSlotIso).getTime() - Date.now()) / 60000)),
+    // ── Delivery fee (quoted from Borzo for delivery orders) ─────────────
+    let deliveryFee = 0
+    if (!isPickup) {
+      deliveryFee = await quoteBorzoDeliveryFee(
+        body.address || '',
+        Number(body.latitude),
+        Number(body.longitude),
+        phone
+      )
     }
 
-    const fullInstructions = appendOrderMeta(body.instructions, {
-      orderType: 'pickup',
-      pickupSlot: pickupSlotIso,
-      pickupCode,
-    })
+    const total = discountedSubtotal + tax + packingFee + deliveryFee
+
+    // ── ETA ───────────────────────────────────────────────────────────────
+    let etaInfo: { eta: string; etaMinutes: number }
+    if (isPickup) {
+      etaInfo = {
+        eta: pickupSlotIso!,
+        etaMinutes: Math.max(1, Math.ceil((new Date(pickupSlotIso!).getTime() - Date.now()) / 60000)),
+      }
+    } else {
+      // Use store's estimated_delivery_minutes for Borzo delivery
+      const deliveryMinutes = Math.max(30, Number(settings.estimated_delivery_minutes || 45))
+      etaInfo = {
+        eta: new Date(Date.now() + deliveryMinutes * 60_000).toISOString(),
+        etaMinutes: deliveryMinutes,
+      }
+    }
+
+    // ── Instructions ─────────────────────────────────────────────────────
+    const fullInstructions = isPickup
+      ? appendOrderMeta(body.instructions, {
+          orderType: 'pickup',
+          pickupSlot: pickupSlotIso!,
+          pickupCode: pickupCode!,
+        })
+      : body.instructions || null
 
     const rzp = new Razorpay({ key_id: KEY_ID, key_secret: KEY_SECRET })
     const rzpOrder = await rzp.orders.create(
@@ -327,16 +409,18 @@ export async function POST(req: Request) {
       total,
       eta: etaInfo.eta,
       estimated_delivery_minutes: etaInfo.etaMinutes,
-      address: 'Self Pickup at Store',
+      address: isPickup ? 'Self Pickup at Store' : (body.address || ''),
       phone: phone || null,
       instructions: fullInstructions || null,
       coupon_code: appliedCoupon?.code || null,
       coupon_id: appliedCoupon?.id || null,
       payment_method: paymentMethod,
-      order_type: 'pickup',
+      order_type: isPickup ? 'pickup' : 'delivery',
       pickup_slot: pickupSlotIso,
       pickup_code: pickupCode,
       razorpay_order_id: rzpOrder.id,
+      dropoff_latitude: isPickup ? null : Number(body.latitude),
+      dropoff_longitude: isPickup ? null : Number(body.longitude),
     }
     const draftToken = signCheckoutDraftToken(draftPayload, CHECKOUT_DRAFT_SECRET)
 
@@ -356,7 +440,7 @@ export async function POST(req: Request) {
       rzpOrder,
       key_id: KEY_ID,
       draftToken,
-      orderType: 'pickup',
+      orderType: isPickup ? 'pickup' : 'delivery',
       pickupSlot: pickupSlotIso,
       deliveryFee,
       total,

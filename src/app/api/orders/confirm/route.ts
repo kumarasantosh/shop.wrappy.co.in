@@ -8,9 +8,92 @@ import { supabaseAdmin } from '../../../../lib/supabaseAdmin'
 import { ProductAddon } from '../../../../lib/types'
 import { notifyAdminsNewOrder } from '../../../../lib/whatsapp'
 import { sendAdminPush, PushPayload } from '../../../../lib/webPush'
+import { createOrder as borzoCrateOrder, BorzoError } from '../../../../lib/borzo'
 
 const KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || ''
 const CHECKOUT_DRAFT_SECRET = process.env.CHECKOUT_DRAFT_SECRET || KEY_SECRET
+
+/**
+ * Dispatches a Borzo delivery order after payment confirmation.
+ * Stores borzo_order_id / borzo_status / borzo_tracking_url on the order row.
+ * Called fire-and-forget — never blocks the confirm response.
+ */
+async function dispatchBorzoOrder(
+  wrappyOrderId: string,
+  draft: CheckoutDraftPayload
+): Promise<void> {
+  const storeLat = Number(
+    process.env.STORE_LATITUDE || process.env.PORTER_PICKUP_LATITUDE || 0
+  )
+  const storeLng = Number(
+    process.env.STORE_LONGITUDE || process.env.PORTER_PICKUP_LONGITUDE || 0
+  )
+  const storeAddress =
+    process.env.PORTER_PICKUP_ADDRESS || 'Wrappy, Kukatpally, Hyderabad'
+  const storeName = process.env.PORTER_PICKUP_NAME || 'Wrappy'
+  const storePhone = process.env.PORTER_PICKUP_PHONE || '9182285342'
+
+  if (!storeLat || !storeLng || !draft.dropoff_latitude || !draft.dropoff_longitude) {
+    console.warn('[confirm] Borzo dispatch skipped — missing coordinates')
+    return
+  }
+
+  try {
+    const result = await borzoCrateOrder({
+      type: 'standard',
+      matter: 'Food',
+      total_weight_kg: 1,
+      is_contact_person_notification_enabled: true,
+      is_client_notification_enabled: true,
+      points: [
+        {
+          address: storeAddress,
+          latitude: storeLat,
+          longitude: storeLng,
+          contact_person: { name: storeName, phone: storePhone },
+        },
+        {
+          address: draft.address || 'Customer Address',
+          latitude: draft.dropoff_latitude,
+          longitude: draft.dropoff_longitude,
+          contact_person: {
+            name: 'Customer',
+            phone: draft.phone || storePhone,
+          },
+        },
+      ],
+    })
+
+    const borzoOrder = result.order as Record<string, unknown>
+    const borzoOrderId = borzoOrder?.order_id
+    const trackingUrl = borzoOrder?.tracking_url as string | undefined
+    const trackingUrls = borzoOrder?.tracking_urls ?? null
+
+    if (borzoOrderId) {
+      const { error } = await supabaseAdmin
+        .from('orders')
+        .update({
+          borzo_order_id: borzoOrderId,
+          borzo_status: (borzoOrder?.status as string) || 'new',
+          borzo_tracking_url: trackingUrl || null,
+          borzo_tracking_urls: trackingUrls,
+        })
+        .eq('id', wrappyOrderId)
+
+      if (error) {
+        console.error('[confirm] Borzo order_id save failed:', error.message)
+      } else {
+        console.log(
+          `[confirm] Borzo order dispatched: borzo_order_id=${borzoOrderId} wrappy_order_id=${wrappyOrderId}`
+        )
+      }
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof BorzoError ? err.message : String(err)
+    console.error('[confirm] Borzo createOrder error:', msg)
+    // Do not re-throw — the payment already succeeded, order is in DB
+  }
+}
 
 type DraftItem = {
   id: string
@@ -43,6 +126,9 @@ type CheckoutDraftPayload = {
   pickup_slot: string | null
   pickup_code: string | null
   razorpay_order_id: string
+  // Delivery-only fields
+  dropoff_latitude?: number | null
+  dropoff_longitude?: number | null
 }
 
 export async function POST(req: Request) {
@@ -188,6 +274,17 @@ export async function POST(req: Request) {
       if (itemsError) {
         return NextResponse.json({ error: itemsError.message }, { status: 500 })
       }
+    }
+
+    // ── Dispatch Borzo delivery order (fire-and-forget) ──────────────────
+    if (
+      draft.order_type === 'delivery' &&
+      draft.dropoff_latitude &&
+      draft.dropoff_longitude
+    ) {
+      dispatchBorzoOrder(order.id, draft).catch((err) =>
+        console.error('[confirm] Borzo dispatch failed:', err)
+      )
     }
 
     // Fire-and-forget background alerts so admins are notified of the new order
