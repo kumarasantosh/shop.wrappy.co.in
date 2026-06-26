@@ -93,6 +93,9 @@ async function handleInbound(body: Record<string, unknown>) {
     } else if (message.type === 'location') {
       const loc = message.location as { latitude: number; longitude: number }
       text = `${loc.latitude}, ${loc.longitude}`
+    } else if (message.type === 'order') {
+      // Customer placed an order via the WhatsApp catalog
+      payload = 'CATALOG_ORDER'
     }
 
     const input = text.toUpperCase().trim()
@@ -134,7 +137,40 @@ async function handleInbound(body: Record<string, unknown>) {
 
       case 'AWAITING_ITEM': {
         if (input === 'MENU' || input === 'VIEW MENU' || payloadNorm === 'VIEW_MENU') {
-          await sendWhatsAppText(phone, await buildMenuText())
+          await sendMenu(phone)
+          break
+        }
+        // Customer selected items from the WhatsApp catalog
+        if (payload === 'CATALOG_ORDER') {
+          const orderMsg = message.order as {
+            catalog_id?: string
+            product_items?: { product_retailer_id: string; quantity: number; item_price: number; currency: string }[]
+          }
+          const items = orderMsg?.product_items || []
+          if (items.length === 0) {
+            await sendMenu(phone)
+            break
+          }
+          const cart: CartItem[] = items.map((p) => ({
+            name: p.product_retailer_id,
+            price: p.item_price,
+            qty: p.quantity,
+          }))
+          const subtotal = cart.reduce((sum, c) => sum + c.price * c.qty, 0)
+          const total = subtotal + DELIVERY_CHARGE
+          const orderId = `ORD-${Date.now()}`
+          await updateSession(phone, {
+            state: 'AWAITING_LOCATION',
+            cart,
+            subtotal,
+            delivery_charge: DELIVERY_CHARGE,
+            total,
+            order_id: orderId,
+          })
+          await sendWhatsAppText(
+            phone,
+            `Perfect! Kindly provide us with the WhatsApp location where our services are required? 📍\n\nTap on "Attachment" icon or "+" Symbol → Location → Send the exact Location where service is required`
+          )
           break
         }
         if (input === 'DONE' || input === 'ORDER') {

@@ -414,14 +414,19 @@ export async function sendWelcomeGreeting(phone: string, name: string): Promise<
   ])
 }
 
-/** T2 — menu_wrappy: both {{header_text}} and {{menu_body}} are in the body */
-export async function sendMenu(phone: string, menuText: string): Promise<void> {
-  return sendTemplate(phone, 'menu_wrappy', [
+/** T2 — wrappy_menu: catalog template — opens the WhatsApp catalog */
+export async function sendMenu(phone: string, _menuText?: string): Promise<void> {
+  const thumbnailId = process.env.WHATSAPP_CATALOG_THUMBNAIL_ID || ''
+  return sendTemplate(phone, 'wrappy_menu', [
     {
-      type: 'body',
+      type: 'button',
+      sub_type: 'catalog',
+      index: '0',
       parameters: [
-        { type: 'text', parameter_name: 'header_text', text: `Our Menu — ${process.env.RESTAURANT_NAME || 'Wrappy'}` },
-        { type: 'text', parameter_name: 'menu_body', text: menuText },
+        {
+          type: 'action',
+          action: { thumbnail_product_retailer_id: thumbnailId },
+        },
       ],
     },
   ])
