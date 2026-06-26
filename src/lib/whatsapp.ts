@@ -416,7 +416,20 @@ export async function sendWelcomeGreeting(phone: string, name: string): Promise<
 
 /** T2 — menu_wrappy: catalog template — opens the WhatsApp catalog */
 export async function sendMenu(phone: string, _menuText?: string): Promise<void> {
-  return sendTemplate(phone, 'menu_wrappy', [])
+  const thumbnailId = process.env.WHATSAPP_CATALOG_THUMBNAIL_ID || ''
+  return sendTemplate(phone, 'menu_wrappy', [
+    {
+      type: 'button',
+      sub_type: 'CATALOG',
+      index: '0',
+      parameters: [
+        {
+          type: 'action',
+          action: { thumbnail_product_retailer_id: thumbnailId },
+        },
+      ],
+    },
+  ])
 }
 
 /** T3 — order_item_selected: sent when customer picks an item number */
