@@ -14,34 +14,35 @@ export async function GET() {
   const { data: products, error } = await supabaseAdmin
     .from('products')
     .select('id, name, description, price, image_url, is_available, categories(name)')
-    .eq('is_available', true)
     .order('name', { ascending: true })
 
   if (error || !products) {
     return new NextResponse('Failed to load products', { status: 500 })
   }
 
-  const items = (products as any[]).map((p) => {
-    const slug = p.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
-    const url = `${APP_URL}/menu`
-    const price = `${p.price}.00 INR`
-    const category = p.categories?.name || 'Food'
-    const description = p.description || `${p.name} - ${category}`
-    const imageUrl = p.image_url || ''
+  const items = (products as any[])
+    .filter((p) => p.image_url) // Meta requires an image
+    .map((p) => {
+      const slug = p.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+      const url = `${APP_URL}/menu`
+      const price = `${p.price}.00 INR`
+      const category = p.categories?.name || 'Food'
+      const description = p.description || `${p.name} - ${category}`
+      const availability = p.is_available ? 'in stock' : 'out of stock'
 
-    return `  <item>
+      return `  <item>
     <id>${slug}</id>
     <title>${escapeXml(p.name)}</title>
     <description>${escapeXml(description)}</description>
     <link>${url}</link>
-    <image_link>${escapeXml(imageUrl)}</image_link>
+    <image_link>${escapeXml(p.image_url)}</image_link>
     <condition>new</condition>
-    <availability>in stock</availability>
+    <availability>${availability}</availability>
     <price>${price}</price>
     <brand>${escapeXml(BRAND)}</brand>
     <google_product_category>Food &amp; Beverages</google_product_category>
   </item>`
-  }).join('\n')
+    }).join('\n')
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
