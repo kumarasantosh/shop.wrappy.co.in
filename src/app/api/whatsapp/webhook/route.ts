@@ -127,7 +127,7 @@ async function handleInbound(body: Record<string, unknown>) {
       case 'AWAITING_MENU': {
         if (input === 'MENU' || input === 'VIEW MENU' || payloadNorm === 'VIEW_MENU') {
           await updateSession(phone, { state: 'AWAITING_ITEM' })
-          await sendWhatsAppText(phone, await buildMenuText())
+          await sendMenu(phone)
         } else {
           // Any other input (including HI/HELLO) re-sends the welcome
           await sendWelcomeGreeting(phone, session.name || profileName)
@@ -177,7 +177,7 @@ async function handleInbound(body: Record<string, unknown>) {
           const cart = session.cart || []
           if (cart.length === 0) {
             await sendWhatsAppText(phone, 'Your cart is empty. Please select an item.')
-            await sendWhatsAppText(phone, await buildMenuText())
+            await sendMenu(phone)
             break
           }
           await updateSession(phone, { state: 'AWAITING_LOCATION' })
@@ -190,7 +190,7 @@ async function handleInbound(body: Record<string, unknown>) {
         const menuItems = await getOrderedMenuItems()
         const itemIndex = parseInt(text, 10) - 1
         if (isNaN(itemIndex) || itemIndex < 0 || itemIndex >= menuItems.length) {
-          await sendWhatsAppText(phone, await buildMenuText())
+          await sendMenu(phone)
           break
         }
         const item = menuItems[itemIndex]
@@ -284,7 +284,7 @@ async function handleInbound(body: Record<string, unknown>) {
           await sendPaymentLink(phone, updatedSession, paymentUrl)
         } else if (payload === 'EDIT_ORDER' || input === 'EDIT') {
           await updateSession(phone, { state: 'AWAITING_ITEM' })
-          await sendWhatsAppText(phone, await buildMenuText())
+          await sendMenu(phone)
         } else {
           await sendOrderSummary(phone, session)
         }
@@ -302,7 +302,7 @@ async function handleInbound(body: Record<string, unknown>) {
       case 'ORDER_CONFIRMED': {
         if (input === 'MENU' || input === 'VIEW MENU' || input === 'ORDER' || payloadNorm === 'VIEW_MENU') {
           await updateSession(phone, { state: 'AWAITING_ITEM' })
-          await sendWhatsAppText(phone, await buildMenuText())
+          await sendMenu(phone)
         } else {
           await sendWelcomeGreeting(phone, session.name || profileName)
         }
