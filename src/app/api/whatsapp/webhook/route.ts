@@ -150,11 +150,21 @@ async function handleInbound(body: Record<string, unknown>) {
             await sendMenu(phone)
             break
           }
-          const cart: CartItem[] = items.map((p) => ({
-            name: p.product_retailer_id,
-            price: p.item_price,
-            qty: p.quantity,
-          }))
+          // Look up product names from Supabase using retailer IDs
+          const retailerIds = items.map((p) => p.product_retailer_id)
+          const { data: productRows } = await supabaseAdmin
+            .from('products')
+            .select('id, name, price')
+            .in('id', retailerIds)
+          const productMap = new Map((productRows || []).map((r: any) => [r.id, r]))
+          const cart: CartItem[] = items.map((p) => {
+            const product = productMap.get(p.product_retailer_id)
+            return {
+              name: product?.name || p.product_retailer_id,
+              price: p.item_price,
+              qty: p.quantity,
+            }
+          })
           const subtotal = cart.reduce((sum, c) => sum + c.price * c.qty, 0)
           const total = subtotal + DELIVERY_CHARGE
           const orderId = `ORD-${Date.now()}`
