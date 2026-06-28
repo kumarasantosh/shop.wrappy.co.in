@@ -95,6 +95,11 @@ export type OrderRecord = {
   created_at: string
   updated_at?: string | null
   order_items?: OrderItemRecord[] | null
+  dropoff_latitude?: number | null
+  dropoff_longitude?: number | null
+  borzo_order_id?: number | null
+  borzo_status?: string | null
+  borzo_tracking_url?: string | null
 }
 
 export type OrderLineProduct = {

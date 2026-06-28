@@ -8,7 +8,7 @@ import { supabaseAdmin } from '../../../../lib/supabaseAdmin'
 import { ProductAddon } from '../../../../lib/types'
 import { notifyAdminsNewOrder } from '../../../../lib/whatsapp'
 import { sendAdminPush, PushPayload } from '../../../../lib/webPush'
-import { createOrder as borzoCrateOrder, BorzoError } from '../../../../lib/borzo'
+import { createOrder as borzoCreateOrder, BorzoError } from '../../../../lib/borzo'
 
 const KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || ''
 const CHECKOUT_DRAFT_SECRET = process.env.CHECKOUT_DRAFT_SECRET || KEY_SECRET
@@ -39,7 +39,7 @@ async function dispatchBorzoOrder(
   }
 
   try {
-    const result = await borzoCrateOrder({
+    const result = await borzoCreateOrder({
       type: 'standard',
       matter: 'Food',
       total_weight_kg: 1,
@@ -249,6 +249,9 @@ export async function POST(req: Request) {
       payment_method: draft.payment_method,
       payment_status: 'paid',
       razorpay_order_id: razorpayOrderId,
+      // Store delivery coordinates so Borzo can be dispatched later (when admin accepts)
+      dropoff_latitude: draft.order_type === 'delivery' ? (draft.dropoff_latitude ?? null) : null,
+      dropoff_longitude: draft.order_type === 'delivery' ? (draft.dropoff_longitude ?? null) : null,
     }
 
     const { data: order, error: orderErr } = await supabaseAdmin
@@ -276,16 +279,9 @@ export async function POST(req: Request) {
       }
     }
 
-    // ── Dispatch Borzo delivery order (fire-and-forget) ──────────────────
-    if (
-      draft.order_type === 'delivery' &&
-      draft.dropoff_latitude &&
-      draft.dropoff_longitude
-    ) {
-      dispatchBorzoOrder(order.id, draft).catch((err) =>
-        console.error('[confirm] Borzo dispatch failed:', err)
-      )
-    }
+    // NOTE: Borzo delivery is dispatched when the admin accepts the order
+    // (status → preparing), NOT immediately on payment. This ensures the kitchen
+    // has acknowledged the order before a courier is assigned.
 
     // Fire-and-forget background alerts so admins are notified of the new order
     // even when no browser tab is open. Never blocks the order response.

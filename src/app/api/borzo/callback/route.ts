@@ -16,25 +16,27 @@
  *
  * Wrappy order status mapping:
  *   Borzo order status       → Wrappy order status
- *   new | available | active → out_for_delivery
+ *   new | available | active → (no change — admin controls preparing→out_for_delivery)
  *   completed                → delivered
  *   canceled                 → cancelled
+ *
+ * NOTE: We intentionally do NOT map new/available/active → out_for_delivery.
+ * The admin must manually advance the order through placed→preparing→out_for_delivery.
+ * Borzo only drives the terminal states (delivered / cancelled).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { parseCallback, verifyCallbackSignature } from '../../../../lib/borzo'
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin'
 
-// Map Borzo order statuses to Wrappy order statuses
+// Map Borzo order statuses to Wrappy order statuses.
+// Only terminal Borzo states drive Wrappy status changes.
+// new / available / active / delayed are intentionally NOT mapped —
+// the admin controls placed → preparing → out_for_delivery manually.
 function toWrappyStatus(
   borzoStatus: string
-): 'out_for_delivery' | 'delivered' | 'cancelled' | null {
+): 'delivered' | 'cancelled' | null {
   switch (borzoStatus) {
-    case 'new':
-    case 'available':
-    case 'active':
-    case 'delayed':
-      return 'out_for_delivery'
     case 'completed':
       return 'delivered'
     case 'canceled':
