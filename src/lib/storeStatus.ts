@@ -1,5 +1,23 @@
 import { StoreSettingsRecord } from './types'
 
+// Store wall-clock timezone offset, in the same sign convention as
+// Date#getTimezoneOffset() (minutes BEHIND UTC; IST = UTC+5:30 = -330).
+// Opening hours are always evaluated in this timezone, never the server's —
+// production servers run in UTC, which otherwise makes the store look closed.
+const STORE_TZ_OFFSET_MINUTES = Number(
+  process.env.STORE_TIMEZONE_OFFSET_MINUTES ||
+    process.env.NEXT_PUBLIC_STORE_TIMEZONE_OFFSET_MINUTES ||
+    -330
+)
+
+/** Minutes-since-midnight of `nowDate` in the store's timezone. */
+function storeMinutesOfDay(nowDate: Date): number {
+  // Shift the instant so that reading its UTC components yields the store's
+  // local wall-clock time, then read hours/minutes.
+  const shifted = new Date(nowDate.getTime() - STORE_TZ_OFFSET_MINUTES * 60_000)
+  return shifted.getUTCHours() * 60 + shifted.getUTCMinutes()
+}
+
 function timeToMinutes(timeValue: string): number {
   const normalized = timeValue.slice(0, 5)
   const [h, m] = normalized.split(':').map(Number)
@@ -32,7 +50,7 @@ export function isStoreOpenNow(
 
   const openMins = timeToMinutes(settings.open_time)
   const closeMins = timeToMinutes(settings.close_time)
-  const nowMins = nowDate.getHours() * 60 + nowDate.getMinutes()
+  const nowMins = storeMinutesOfDay(nowDate)
 
   if (openMins === closeMins) return true
   if (openMins < closeMins) return nowMins >= openMins && nowMins < closeMins
@@ -47,7 +65,7 @@ export function getNextOpeningTime(
   if (isStoreOpenNow(settings, nowDate)) return 'Open now'
 
   const openMins = timeToMinutes(settings.open_time)
-  const nowMins = nowDate.getHours() * 60 + nowDate.getMinutes()
+  const nowMins = storeMinutesOfDay(nowDate)
 
   if (openMins > nowMins) return `Opens today at ${formatTime(settings.open_time)}`
   return `Opens tomorrow at ${formatTime(settings.open_time)}`
