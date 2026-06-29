@@ -10,6 +10,8 @@ export default function Navbar() {
   const count = items.reduce((a, b) => a + b.qty, 0)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [adminHome, setAdminHome] = useState('/admin')
+  const [adminLabel, setAdminLabel] = useState('Admin')
 
   useEffect(() => {
     let cancelled = false
@@ -30,6 +32,9 @@ export default function Navbar() {
         const payload = await response.json()
         if (cancelled) return
         setIsAdmin(Boolean(payload?.admin))
+        setAdminHome(typeof payload?.home === 'string' ? payload.home : '/admin')
+        // Branch staff/admins only get their orders console — label it as such.
+        setAdminLabel(payload?.isSuperAdmin ? 'Admin' : 'Orders Console')
       } catch {
         if (!cancelled) {
           setIsAdmin(false)
@@ -59,7 +64,7 @@ export default function Navbar() {
           <Link href="/menu" className="hover:text-white transition-colors">Menu</Link>
           <Link href="/orders" className="hover:text-white transition-colors">Orders</Link>
           {isAdmin ? (
-            <Link href="/admin" className="hover:text-white transition-colors">Admin</Link>
+            <Link href={adminHome} className="hover:text-white transition-colors">{adminLabel}</Link>
           ) : null}
         </nav>
 
@@ -150,11 +155,11 @@ export default function Navbar() {
             </Link>
             {isAdmin ? (
               <Link
-                href="/admin"
+                href={adminHome}
                 onClick={closeMobileMenu}
                 className="rounded-lg px-3 py-2 transition-colors hover:bg-white/5 hover:text-white"
               >
-                Admin
+                {adminLabel}
               </Link>
             ) : null}
           </nav>

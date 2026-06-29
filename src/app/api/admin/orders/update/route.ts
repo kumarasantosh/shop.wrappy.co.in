@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
-import { requireAdmin } from '../../../../../lib/admin'
+import { getAccessScope } from '../../../../../lib/admin'
 import { supabaseAdmin } from '../../../../../lib/supabaseAdmin'
+import { getBranchById } from '../../../../../lib/branchesServer'
 import { sendWhatsAppTemplate } from '../../../../../lib/whatsapp'
 import { createOrder as borzoCreateOrder, BorzoError } from '../../../../../lib/borzo'
 
@@ -12,8 +13,8 @@ type Status =
   | 'cancelled'
 
 export async function POST(req: Request) {
-  const admin = await requireAdmin()
-  if (!admin.ok) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  const scope = await getAccessScope()
+  if (!scope.ok) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   const hasSupabase = Boolean(
     process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.NEXT_PUBLIC_SUPABASE_URL
   )
@@ -22,6 +23,18 @@ export async function POST(req: Request) {
   const body = (await req.json()) as { id?: string; status?: Status }
   const { id, status } = body
   if (!id || !status) return NextResponse.json({ error: 'missing' }, { status: 400 })
+
+  // Branch staff/admin may only act on their own branch's orders.
+  if (!scope.isSuperAdmin) {
+    const { data: ord } = await supabaseAdmin
+      .from('orders')
+      .select('branch_id')
+      .eq('id', id)
+      .maybeSingle()
+    if (!ord || !ord.branch_id || !scope.branchIds.includes(ord.branch_id)) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+    }
+  }
 
   const payload: Record<string, unknown> = { status }
   if (status === 'delivered') {
@@ -70,11 +83,17 @@ export async function POST(req: Request) {
     const lng = (data as Record<string, unknown>).dropoff_longitude as number | null | undefined
 
     if (lat && lng) {
-      const storeLat = Number(process.env.STORE_LATITUDE || process.env.PORTER_PICKUP_LATITUDE || 0)
-      const storeLng = Number(process.env.STORE_LONGITUDE || process.env.PORTER_PICKUP_LONGITUDE || 0)
-      const storeAddress = process.env.PORTER_PICKUP_ADDRESS || 'Wrappy, Kukatpally, Hyderabad'
-      const storeName = process.env.PORTER_PICKUP_NAME || 'Wrappy'
-      const storePhone = process.env.PORTER_PICKUP_PHONE || '9182285342'
+      // Dispatch the courier from the order's branch when set; else env defaults.
+      const branch = data.branch_id ? await getBranchById(String(data.branch_id)) : null
+      const storeLat = Number(
+        (branch?.latitude ?? null) || process.env.STORE_LATITUDE || process.env.PORTER_PICKUP_LATITUDE || 0
+      )
+      const storeLng = Number(
+        (branch?.longitude ?? null) || process.env.STORE_LONGITUDE || process.env.PORTER_PICKUP_LONGITUDE || 0
+      )
+      const storeAddress = branch?.address || process.env.PORTER_PICKUP_ADDRESS || 'Wrappy, Kukatpally, Hyderabad'
+      const storeName = branch?.name || process.env.PORTER_PICKUP_NAME || 'Wrappy'
+      const storePhone = branch?.phone || process.env.PORTER_PICKUP_PHONE || '9182285342'
       const customerPhone = (data.phone as string | null) || storePhone
 
       if (storeLat && storeLng) {

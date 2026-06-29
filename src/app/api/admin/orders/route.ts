@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { requireAdmin } from '../../../../lib/admin'
+import { getAccessScope } from '../../../../lib/admin'
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin'
 import { parseOrderMeta } from '../../../../lib/orderMeta'
 import {
@@ -149,18 +149,32 @@ async function checkPickupPendingOrders() {
   }
 }
 
-export async function GET() {
-  const admin = await requireAdmin()
-  if (!admin.ok) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+export async function GET(req: Request) {
+  const scope = await getAccessScope()
+  if (!scope.ok) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   const hasSupabase = Boolean(
     process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.NEXT_PUBLIC_SUPABASE_URL
   )
   if (!hasSupabase) return NextResponse.json({ orders: [] })
 
-  const { data, error } = await supabaseAdmin
+  const { searchParams } = new URL(req.url)
+  const branchFilter = searchParams.get('branchId') || ''
+
+  let query = supabaseAdmin
     .from('orders')
     .select('*,order_items(*,product:products(id,name,image_url,is_veg))')
     .order('created_at', { ascending: false })
+
+  // Branch admins/staff only see their branch's orders; superadmin sees all
+  // (optionally filtered to one branch via ?branchId=).
+  if (!scope.isSuperAdmin) {
+    const ids = scope.branchIds.length ? scope.branchIds : ['00000000-0000-0000-0000-000000000000']
+    query = query.in('branch_id', ids)
+  } else if (branchFilter) {
+    query = query.eq('branch_id', branchFilter)
+  }
+
+  const { data, error } = await query
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

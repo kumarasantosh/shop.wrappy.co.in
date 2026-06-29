@@ -19,11 +19,16 @@ export type CartItem = {
 type CartState = {
   items: CartItem[]
   couponCode: string
+  branchId: string
+  branchName: string
   addItem: (item: CartItem) => void
   removeItem: (lineId: string) => void
   updateQty: (lineId: string, qty: number) => void
   clear: () => void
   setCouponCode: (couponCode: string) => void
+  // Switch the active branch. The cart is kept as-is; branch pricing/
+  // availability is re-applied server-side when the order is placed.
+  setBranch: (branchId: string, branchName?: string) => void
 }
 
 export const useCartStore = create<CartState>()(
@@ -31,6 +36,10 @@ export const useCartStore = create<CartState>()(
     (set) => ({
       items: [],
       couponCode: '',
+      branchId: '',
+      branchName: '',
+      setBranch: (branchId, branchName) =>
+        set((state) => ({ branchId, branchName: branchName ?? state.branchName })),
       addItem: (item) =>
         set((state) => {
           const existing = state.items.find((entry) => entry.lineId === item.lineId)

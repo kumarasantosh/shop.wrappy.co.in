@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { requireAdmin } from '../../../../../lib/admin'
+import { getAccessScope } from '../../../../../lib/admin'
 import { supabaseAdmin } from '../../../../../lib/supabaseAdmin'
 
 // Returns a single order (with its items + product) by id.
@@ -10,8 +10,8 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const admin = await requireAdmin()
-  if (!admin.ok) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  const scope = await getAccessScope()
+  if (!scope.ok) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
 
   const hasSupabase = Boolean(
     process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -28,6 +28,11 @@ export async function GET(
     .maybeSingle()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Branch members may only read their own branch's orders.
+  if (data && !scope.isSuperAdmin && (!data.branch_id || !scope.branchIds.includes(data.branch_id))) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
 
   return NextResponse.json({ order: data || null })
 }

@@ -7,6 +7,10 @@ the browser connects with the public anon key **plus a Clerk session token**
 who may receive which rows.
 
 - **Admins** (`public_metadata.role = "admin"`) receive **all** orders.
+- **Branch admins / staff** (listed in `branch_members` by email) receive
+  **only their own branch's** orders. Requires the `email` claim in the session
+  token (see step 1.2) and the policy in
+  `supabase/migrations/0005_branch_orders_rls.sql`.
 - **Customers** receive **only their own** orders.
 - Anyone without a valid admin/owner identity receives **nothing** — even
   though the anon key is public, no order data leaks.
@@ -35,12 +39,14 @@ There are two one-time setup steps in dashboards, plus the SQL.
 
    ```json
    {
-     "user_role": "{{user.public_metadata.role}}"
+     "user_role": "{{user.public_metadata.role}}",
+     "email": "{{user.primary_email_address}}"
    }
    ```
 
    (Use `user_role`, not `role` — the Supabase integration reserves `role` and
-   sets it to `authenticated`.)
+   sets it to `authenticated`. The `email` claim is what matches branch admins /
+   staff to their branch in `branch_members`.)
 
 3. **Mark your admin users.**
    Clerk Dashboard → **Users** → pick the admin user → **Metadata** →

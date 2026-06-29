@@ -63,6 +63,7 @@ function OrderCard({
   onReady,
   onComplete,
   isUpdating = false,
+  branchName,
 }: {
   order: OrderRecord
   onAccept: (id: string) => void
@@ -70,6 +71,7 @@ function OrderCard({
   onReady: (id: string) => void
   onComplete: (id: string) => void
   isUpdating?: boolean
+  branchName?: string
 }) {
   const [expanded, setExpanded] = useState(false)
   const [verifyCode, setVerifyCode] = useState('')
@@ -113,6 +115,11 @@ function OrderCard({
             {meta.orderType === 'pickup' ? '📦 Self Pickup' : '🚚 Delivery'}
             {' · '}{order.phone || 'No phone'}
           </p>
+          {branchName && (
+            <p className="mt-0.5 inline-block rounded-full bg-indigo-500/15 px-2 py-0.5 text-[11px] font-medium text-indigo-300">
+              🏬 {branchName}
+            </p>
+          )}
           {meta.orderType === 'pickup' && meta.pickupCode && (
             <p className="mt-0.5 text-xs text-emerald-400">
               Code: {meta.pickupCode}
@@ -320,6 +327,32 @@ export default function AdminOrdersPage() {
   const { session, isLoaded: isSessionLoaded } = useSession()
   const supabase = useClerkSupabaseClient()
   const [orders, setOrders] = useState<OrderRecord[]>([])
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([])
+  const [selectedBranchId, setSelectedBranchId] = useState('')
+  const selectedBranchIdRef = useRef('')
+  selectedBranchIdRef.current = selectedBranchId
+  // The set of stores this user is allowed to see (their own branch(es), or
+  // every branch for an owner). Used to keep realtime events isolated per store.
+  const branchesRef = useRef<{ id: string; name: string }[]>([])
+  const branchNameById = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const b of branches) map[b.id] = b.name
+    return map
+  }, [branches])
+
+  // Whether a given order should appear in this user's feed, given the active
+  // store filter and the set of stores they're allowed to see.
+  const isOrderVisible = useCallback((branchId: string | null | undefined) => {
+    const filter = selectedBranchIdRef.current
+    if (filter) return branchId === filter
+    const allowed = branchesRef.current
+    // Single-store mode (no branches configured): show everything.
+    if (allowed.length === 0) return true
+    // Multi-branch: only show orders from a store this user can access.
+    // Unassigned (legacy, null-branch) orders are left visible.
+    if (!branchId) return true
+    return allowed.some((b) => b.id === branchId)
+  }, [])
   const [pendingStatusByOrderId, setPendingStatusByOrderId] = useState<
     Record<string, OrderRecord['status']>
   >({})
@@ -437,7 +470,10 @@ export default function AdminOrdersPage() {
 
   /* ── Fetch orders ── */
   async function fetchOrders(options?: { initial?: boolean }) {
-    const response = await fetch('/api/admin/orders', { cache: 'no-store' })
+    const branchQuery = selectedBranchIdRef.current
+      ? `?branchId=${encodeURIComponent(selectedBranchIdRef.current)}`
+      : ''
+    const response = await fetch(`/api/admin/orders${branchQuery}`, { cache: 'no-store' })
     if (!response.ok) throw new Error('Unable to fetch orders')
     const payload = await response.json()
     const nextOrdersFromServer = (payload.orders || []) as OrderRecord[]
@@ -571,6 +607,10 @@ export default function AdminOrdersPage() {
     const row = payload.new
     if (!row?.id) return
 
+    // Keep stores isolated: ignore live events for orders this user shouldn't
+    // see (other branches) or that the active store filter excludes.
+    if (!isOrderVisible(row.branch_id)) return
+
     if (payload.eventType === 'INSERT') {
       const full = (await fetchSingleOrder(row.id)) || (row as OrderRecord)
       const isUnseenPlaced =
@@ -628,6 +668,30 @@ export default function AdminOrdersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  /* ── Load the stores this user can see (for the store filter) ── */
+  useEffect(() => {
+    fetch('/api/branches?all=1', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => {
+        const list = ((d.branches || []) as { id: string; name: string }[]).map((b) => ({
+          id: b.id,
+          name: b.name,
+        }))
+        branchesRef.current = list
+        setBranches(list)
+      })
+      .catch(() => {})
+  }, [])
+
+  /* ── Refetch when the store filter changes ── */
+  useEffect(() => {
+    // Reset the seen-set so the new branch's existing orders don't trigger
+    // "new order" alerts, then reload scoped to the selected store.
+    hasInitialOrderLoadRef.current = false
+    fetchOrders({ initial: true }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBranchId])
+
   /* ── Realtime socket subscription (authenticated, no polling) ── */
   const hasSession = Boolean(session)
   useEffect(() => {
@@ -668,13 +732,28 @@ export default function AdminOrdersPage() {
     // page wakes / regains network / refocuses, force the socket + channel
     // back up and resync so the feed is never stale. Also a lightweight
     // periodic liveness check as a final safety net.
-    const ensureLive = (resync = false) => {
+    // Push a FRESH Clerk token to the realtime socket. setAuth() with no args
+    // re-invokes the client's accessToken callback (which reads the latest
+    // Clerk session), so this both refreshes before expiry and re-authorizes
+    // joined channels. Without this, a dropped channel rejoins with an expired
+    // token and stays stuck on "Reconnecting".
+    const refreshSocketAuth = async () => {
+      try {
+        await supabase.realtime.setAuth()
+      } catch {
+        /* noop */
+      }
+    }
+
+    const ensureLive = async (resync = false) => {
       const socketDown = !supabase.realtime.isConnected()
       const channelDown = channel.state !== 'joined' && channel.state !== 'joining'
+      // Always hand the socket a fresh token before (re)connecting.
+      if (socketDown || channelDown) await refreshSocketAuth()
       if (socketDown) supabase.realtime.connect()
       if (channelDown) {
         setLiveStatus('reconnecting')
-        channel.subscribe() // rejoin the existing channel
+        channel.subscribe() // rejoin the existing channel with the fresh token
       }
       // Resync ONLY on an explicit wake/online/focus event, or when we just had
       // to recover a dead connection. A healthy socket triggers no fetch — so
@@ -684,7 +763,7 @@ export default function AdminOrdersPage() {
       }
     }
 
-    const wake = () => ensureLive(true) // event-driven catch-up
+    const wake = () => { ensureLive(true).catch(() => {}) } // event-driven catch-up
     const onVisible = () => {
       if (document.visibilityState === 'visible') wake()
     }
@@ -694,14 +773,20 @@ export default function AdminOrdersPage() {
     // Liveness watchdog: only reconnects if the socket/channel is actually
     // down; does nothing (no fetch) while healthy.
     const liveness = window.setInterval(() => {
-      if (document.visibilityState === 'visible') ensureLive(false)
+      if (document.visibilityState === 'visible') ensureLive(false).catch(() => {})
     }, 20000)
+    // Proactive token refresh — keep the socket authorized ahead of the
+    // short-lived Clerk token's expiry so it never drops in the first place.
+    const authRefresh = window.setInterval(() => {
+      if (document.visibilityState === 'visible') refreshSocketAuth()
+    }, 40000)
 
     return () => {
       window.removeEventListener('online', wake)
       window.removeEventListener('focus', wake)
       document.removeEventListener('visibilitychange', onVisible)
       window.clearInterval(liveness)
+      window.clearInterval(authRefresh)
       supabase.removeChannel(channel)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -805,6 +890,19 @@ export default function AdminOrdersPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {branches.length > 1 && (
+            <select
+              value={selectedBranchId}
+              onChange={(e) => setSelectedBranchId(e.target.value)}
+              className="rounded-xl border border-white/10 bg-[#222] px-3 py-2 text-sm text-white focus:border-white/30 focus:outline-none"
+              title="Filter orders by store"
+            >
+              <option value="">All stores</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+          )}
           <PushAlertsButton />
           {newOrders.length > 0 && (
             <div className="flex items-center gap-2">
@@ -874,6 +972,7 @@ export default function AdminOrdersPage() {
                       onReady={markReady}
                       onComplete={completeOrder}
                       isUpdating={Boolean(pendingStatusByOrderId[order.id])}
+                      branchName={order.branch_id ? branchNameById[order.branch_id] : undefined}
                     />
                   ))}
                 </AnimatePresence>
@@ -901,6 +1000,7 @@ export default function AdminOrdersPage() {
                       onReady={markReady}
                       onComplete={completeOrder}
                       isUpdating={Boolean(pendingStatusByOrderId[order.id])}
+                      branchName={order.branch_id ? branchNameById[order.branch_id] : undefined}
                     />
                   ))}
                 </AnimatePresence>
@@ -928,6 +1028,7 @@ export default function AdminOrdersPage() {
                       onReady={markReady}
                       onComplete={completeOrder}
                       isUpdating={Boolean(pendingStatusByOrderId[order.id])}
+                      branchName={order.branch_id ? branchNameById[order.branch_id] : undefined}
                     />
                   ))}
                 </AnimatePresence>
@@ -1013,6 +1114,9 @@ export default function AdminOrdersPage() {
                                   {' · '}{itemCount} item{itemCount !== 1 ? 's' : ''}
                                   {' · '}{order.phone || 'No phone'}
                                   {' · '}{order.created_at ? new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                                  {order.branch_id && branchNameById[order.branch_id]
+                                    ? ` · 🏬 ${branchNameById[order.branch_id]}`
+                                    : ''}
                                 </p>
                               </div>
                               <p className="text-sm font-bold text-white">{formatMoney(order.total)}</p>

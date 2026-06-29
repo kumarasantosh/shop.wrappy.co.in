@@ -4,9 +4,26 @@ import { supabaseAdmin } from '../../../lib/supabaseAdmin'
 import { getDefaultStoreSettings, normalizeStoreSettings } from '../../../lib/storeStatus'
 import { StoreSettingsRecord } from '../../../lib/types'
 
-export async function GET() {
+export async function GET(req: Request) {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return NextResponse.json(getDefaultStoreSettings())
+  }
+
+  const { searchParams } = new URL(req.url)
+  const branchId = searchParams.get('branchId') || ''
+
+  // Branch-specific opening hours override the global store settings.
+  if (branchId) {
+    const { data: branch } = await supabaseAdmin
+      .from('branches')
+      .select('open_time,close_time,allow_preorder,force_closed,estimated_delivery_minutes')
+      .eq('id', branchId)
+      .maybeSingle()
+    if (branch) {
+      return NextResponse.json(
+        normalizeStoreSettings(branch as Partial<StoreSettingsRecord>)
+      )
+    }
   }
 
   const { data, error } = await supabaseAdmin

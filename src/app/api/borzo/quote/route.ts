@@ -13,25 +13,30 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { BorzoError, calculateOrder } from '../../../../lib/borzo'
+import { getBranchById } from '../../../../lib/branchesServer'
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { address, latitude, longitude } = body as {
+    const { address, latitude, longitude, branchId } = body as {
       address?: string
       latitude?: number
       longitude?: number
+      branchId?: string
     }
 
     if (!latitude || !longitude) {
       return NextResponse.json({ fee: 0, error: 'latitude_and_longitude_required' }, { status: 400 })
     }
 
+    // Quote from the selected branch's location when supplied.
+    const branch = branchId ? await getBranchById(String(branchId)) : null
+
     const storeLat = Number(
-      process.env.STORE_LATITUDE || process.env.PORTER_PICKUP_LATITUDE || 0
+      (branch?.latitude ?? null) || process.env.STORE_LATITUDE || process.env.PORTER_PICKUP_LATITUDE || 0
     )
     const storeLng = Number(
-      process.env.STORE_LONGITUDE || process.env.PORTER_PICKUP_LONGITUDE || 0
+      (branch?.longitude ?? null) || process.env.STORE_LONGITUDE || process.env.PORTER_PICKUP_LONGITUDE || 0
     )
 
     if (!storeLat || !storeLng) {
@@ -39,9 +44,9 @@ export async function POST(req: NextRequest) {
     }
 
     const storeAddress =
-      process.env.PORTER_PICKUP_ADDRESS || 'Wrappy, Kukatpally, Hyderabad'
-    const storeName = process.env.PORTER_PICKUP_NAME || 'Wrappy'
-    const storePhone = process.env.PORTER_PICKUP_PHONE || '9182285342'
+      branch?.address || process.env.PORTER_PICKUP_ADDRESS || 'Wrappy, Kukatpally, Hyderabad'
+    const storeName = branch?.name || process.env.PORTER_PICKUP_NAME || 'Wrappy'
+    const storePhone = branch?.phone || process.env.PORTER_PICKUP_PHONE || '9182285342'
 
     const result = await calculateOrder({
       type: 'standard',

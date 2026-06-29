@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '../../../lib/admin'
 import { supabaseAdmin } from '../../../lib/supabaseAdmin'
+import { getBranchProductMap } from '../../../lib/branchesServer'
 
 const MOCK_PRODUCTS = [
   {
@@ -55,10 +56,13 @@ function normalizeAddons(
     }))
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return NextResponse.json({ products: MOCK_PRODUCTS })
   }
+
+  const { searchParams } = new URL(req.url)
+  const branchId = searchParams.get('branchId') || ''
 
   const { data, error } = await supabaseAdmin
     .from('products')
@@ -68,7 +72,25 @@ export async function GET() {
     .order('created_at', { ascending: false })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ products: data || [] })
+
+  let products = data || []
+
+  // Apply per-branch availability + price overrides so each branch shows its
+  // own menu. Products explicitly turned off for the branch are hidden.
+  if (branchId) {
+    const overrides = await getBranchProductMap(branchId)
+    products = products.map((p: any) => {
+      const ov = overrides.get(String(p.id))
+      if (!ov) return p
+      return {
+        ...p,
+        is_available: p.is_available !== false && ov.is_available !== false,
+        price: ov.price_override != null ? Number(ov.price_override) : p.price,
+      }
+    })
+  }
+
+  return NextResponse.json({ products })
 }
 
 export async function POST(req: Request) {

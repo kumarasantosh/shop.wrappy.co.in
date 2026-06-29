@@ -16,6 +16,8 @@ import {
 import { supabaseAdmin } from '../../../../lib/supabaseAdmin'
 import { CouponRecord, ProductAddon, StoreSettingsRecord } from '../../../../lib/types'
 import { calculateOrder, BorzoError } from '../../../../lib/borzo'
+import { getBranchById, getBranchProductMap } from '../../../../lib/branchesServer'
+import { BranchRecord } from '../../../../lib/branches'
 
 const TAX_RATE = 0.05
 const PACKING_FEE_PER_ITEM = 5
@@ -55,6 +57,13 @@ type CheckoutDraftPayload = {
   pickup_slot: string | null
   pickup_code: string | null
   razorpay_order_id: string
+  // Branch fulfilment
+  branch_id: string | null
+  pickup_address: string
+  pickup_name: string
+  pickup_phone: string
+  pickup_latitude: number | null
+  pickup_longitude: number | null
   // Delivery-only fields
   dropoff_latitude: number | null
   dropoff_longitude: number | null
@@ -131,14 +140,40 @@ function parsePickupSlotToDate(
   return parsed
 }
 
+type PickupOrigin = {
+  address: string
+  name: string
+  phone: string
+  latitude: number
+  longitude: number
+}
+
+function resolvePickupOrigin(branch: BranchRecord | null): PickupOrigin {
+  const branchLat = branch?.latitude != null ? Number(branch.latitude) : 0
+  const branchLng = branch?.longitude != null ? Number(branch.longitude) : 0
+  return {
+    address:
+      branch?.address ||
+      process.env.PORTER_PICKUP_ADDRESS ||
+      'Wrappy, Kukatpally, Hyderabad',
+    name: branch?.name || process.env.PORTER_PICKUP_NAME || 'Wrappy',
+    phone: branch?.phone || process.env.PORTER_PICKUP_PHONE || '9182285342',
+    latitude:
+      branchLat || Number(process.env.STORE_LATITUDE || process.env.PORTER_PICKUP_LATITUDE || 0),
+    longitude:
+      branchLng || Number(process.env.STORE_LONGITUDE || process.env.PORTER_PICKUP_LONGITUDE || 0),
+  }
+}
+
 async function quoteBorzoDeliveryFee(
   customerAddress: string,
   customerLat: number,
   customerLng: number,
-  phone: string
+  phone: string,
+  pickup: PickupOrigin
 ): Promise<number> {
-  const storeLat = Number(process.env.STORE_LATITUDE || process.env.PORTER_PICKUP_LATITUDE || 0)
-  const storeLng = Number(process.env.STORE_LONGITUDE || process.env.PORTER_PICKUP_LONGITUDE || 0)
+  const storeLat = pickup.latitude
+  const storeLng = pickup.longitude
 
   if (!storeLat || !storeLng) return 0
 
@@ -149,12 +184,12 @@ async function quoteBorzoDeliveryFee(
       total_weight_kg: 1,
       points: [
         {
-          address: process.env.PORTER_PICKUP_ADDRESS || 'Wrappy, Kukatpally, Hyderabad',
+          address: pickup.address,
           latitude: storeLat,
           longitude: storeLng,
           contact_person: {
-            name: process.env.PORTER_PICKUP_NAME || 'Wrappy',
-            phone: process.env.PORTER_PICKUP_PHONE || '9182285342',
+            name: pickup.name,
+            phone: pickup.phone,
           },
         },
         {
@@ -195,9 +230,23 @@ export async function POST(req: Request) {
       includePacking?: boolean
       latitude?: number
       longitude?: number
+      branchId?: string
     }
 
     const isPickup = !body.orderType || body.orderType === 'pickup'
+
+    // Resolve the fulfilling branch (nearest/selected). Falls back to the
+    // single-store env config when no branch is supplied.
+    const branch: BranchRecord | null = body.branchId
+      ? await getBranchById(String(body.branchId))
+      : null
+    if (body.branchId && !branch) {
+      return NextResponse.json({ error: 'invalid_branch' }, { status: 400 })
+    }
+    if (branch && branch.is_active === false) {
+      return NextResponse.json({ error: 'branch_inactive' }, { status: 400 })
+    }
+    const pickupOrigin = resolvePickupOrigin(branch)
 
     const items = body.items || []
     if (items.length === 0) {
@@ -215,7 +264,7 @@ export async function POST(req: Request) {
 
       const { data: productRows, error: productsError } = await supabaseAdmin
         .from('products')
-        .select('id,name,is_available')
+        .select('id,name,is_available,price')
         .in('id', uniqueProductIds)
 
       if (productsError) {
@@ -226,10 +275,25 @@ export async function POST(req: Request) {
         (productRows || []).map((row: any) => [String(row.id), row])
       )
 
+      // Per-branch availability + price overrides.
+      const branchOverrides = branch ? await getBranchProductMap(branch.id) : new Map()
+
       const unavailable = uniqueProductIds
-        .map((productId) => productMap.get(productId))
-        .filter((row) => !row || row.is_available === false)
-        .map((row) => String(row?.name || 'Item'))
+        .map((productId) => ({ id: productId, row: productMap.get(productId), ov: branchOverrides.get(productId) }))
+        .filter(({ row, ov }) => !row || row.is_available === false || (ov && ov.is_available === false))
+        .map(({ row }) => String(row?.name || 'Item'))
+
+      // Apply branch price overrides. The client price already includes addon
+      // amounts, so we swap only the base product price (override − catalogue),
+      // preserving any addon charges on the line.
+      for (const item of items) {
+        const row = productMap.get(String(item.id))
+        const ov = branchOverrides.get(String(item.id))
+        if (row && ov && ov.price_override != null) {
+          const delta = Number(ov.price_override) - Number(row.price)
+          if (Number.isFinite(delta)) item.price = Math.max(0, Number(item.price) + delta)
+        }
+      }
 
       if (unavailable.length > 0) {
         return NextResponse.json(
@@ -282,7 +346,10 @@ export async function POST(req: Request) {
     }
 
     let settings = getDefaultStoreSettings()
-    if (hasSupabase) {
+    if (branch) {
+      // Branch opening hours take precedence over the global store settings.
+      settings = normalizeStoreSettings(branch as unknown as Partial<StoreSettingsRecord>)
+    } else if (hasSupabase) {
       const { data: settingsRow } = await supabaseAdmin
         .from('store_settings')
         .select('*')
@@ -352,7 +419,8 @@ export async function POST(req: Request) {
         body.address || '',
         Number(body.latitude),
         Number(body.longitude),
-        phone
+        phone,
+        pickupOrigin
       )
     }
 
@@ -419,6 +487,12 @@ export async function POST(req: Request) {
       pickup_slot: pickupSlotIso,
       pickup_code: pickupCode,
       razorpay_order_id: rzpOrder.id,
+      branch_id: branch?.id || null,
+      pickup_address: pickupOrigin.address,
+      pickup_name: pickupOrigin.name,
+      pickup_phone: pickupOrigin.phone,
+      pickup_latitude: pickupOrigin.latitude || null,
+      pickup_longitude: pickupOrigin.longitude || null,
       dropoff_latitude: isPickup ? null : Number(body.latitude),
       dropoff_longitude: isPickup ? null : Number(body.longitude),
     }

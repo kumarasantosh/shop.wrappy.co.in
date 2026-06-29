@@ -1,4 +1,6 @@
 import { auth, currentUser } from '@clerk/nextjs/server'
+import { BranchRole } from './branches'
+import { getBranchMembershipsByEmail } from './branchesServer'
 
 function parseAdminUserIds(): Set<string> {
   const raw = process.env.CLERK_ADMIN_USER_IDS || ''
@@ -84,5 +86,79 @@ export async function requireAdmin() {
     return { ok: false as const, userId }
   }
   return { ok: true as const, userId }
+}
+
+// ── Branch-scoped access ─────────────────────────────────────────────────────
+
+/** Best-effort primary email of the current Clerk user. */
+export async function getCurrentUserEmail(): Promise<string | null> {
+  const user = await currentUser().catch(() => null)
+  if (!user) return null
+  const primaryId = user.primaryEmailAddressId
+  const primary = user.emailAddresses?.find((e) => e.id === primaryId)
+  return (primary?.emailAddress || user.emailAddresses?.[0]?.emailAddress || null) || null
+}
+
+export type AccessScope = {
+  ok: boolean
+  userId: string | null
+  email: string | null
+  /** Global owner/superadmin — sees and manages every branch. */
+  isSuperAdmin: boolean
+  /** Highest role across the user's branch memberships. */
+  role: 'super' | BranchRole | null
+  /** Branch ids the user may act on. Empty + isSuperAdmin means "all". */
+  branchIds: string[]
+  /** True if the user is a branch admin in at least one branch. */
+  isBranchAdmin: boolean
+}
+
+/**
+ * Resolves what the current user is allowed to do: global superadmin, a
+ * per-branch admin, or per-branch staff. Used by admin pages/routes to scope
+ * data to the caller's branch.
+ */
+export async function getAccessScope(): Promise<AccessScope> {
+  const session = await auth()
+  const userId = session.userId
+  if (!userId) {
+    return { ok: false, userId: null, email: null, isSuperAdmin: false, role: null, branchIds: [], isBranchAdmin: false }
+  }
+
+  const superAdmin = await hasAdminAccess({
+    userId,
+    sessionClaims: session.sessionClaims,
+  })
+
+  const email = await getCurrentUserEmail()
+  const memberships = await getBranchMembershipsByEmail(email)
+  const branchIds = Array.from(new Set(memberships.map((m) => m.branch_id)))
+  const isBranchAdmin = memberships.some((m) => m.role === 'admin')
+
+  if (superAdmin) {
+    return { ok: true, userId, email, isSuperAdmin: true, role: 'super', branchIds, isBranchAdmin: true }
+  }
+
+  if (memberships.length > 0) {
+    return {
+      ok: true,
+      userId,
+      email,
+      isSuperAdmin: false,
+      role: isBranchAdmin ? 'admin' : 'staff',
+      branchIds,
+      isBranchAdmin,
+    }
+  }
+
+  return { ok: false, userId, email, isSuperAdmin: false, role: null, branchIds, isBranchAdmin: false }
+}
+
+/**
+ * Like requireAdmin but also grants access to branch admins/staff.
+ * Returns the resolved scope so callers can filter by branch.
+ */
+export async function requireBranchAccess(): Promise<AccessScope> {
+  return getAccessScope()
 }
 

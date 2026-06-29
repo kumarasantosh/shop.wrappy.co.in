@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useUser } from '@clerk/nextjs'
 import OSMAddressPicker from '../../components/OSMAddressPicker'
+import BranchSelector from '../../components/BranchSelector'
 import { useCartStore } from '../../store/cart'
 import { AddressRecord, CustomerPhoneRecord } from '../../lib/types'
 // Delivery is disabled — stub out the radius helpers so the file compiles.
@@ -226,6 +227,7 @@ export default function CheckoutPage() {
   const items = useCartStore((state) => state.items)
   const clearCart = useCartStore((state) => state.clear)
   const storedCouponCode = useCartStore((state) => state.couponCode)
+  const branchId = useCartStore((state) => state.branchId)
 
   const [addresses, setAddresses] = useState<AddressRecord[]>([])
   const [selectedAddressId, setSelectedAddressId] = useState('')
@@ -497,6 +499,7 @@ export default function CheckoutPage() {
         longitude: effectiveCoordinates.longitude,
         phone: phone.trim() || undefined,
         subtotal: taxableAmount,
+        branchId: branchId || undefined,
       }),
     })
       .then(async (res) => {
@@ -530,6 +533,7 @@ export default function CheckoutPage() {
     resolvingDistance,
     taxableAmount,
     phone,
+    branchId,
   ])
 
   async function loadAddresses() {
@@ -984,6 +988,7 @@ export default function CheckoutPage() {
           includePacking: isPickup ? includePickupPacking : true,
           latitude,
           longitude,
+          branchId: branchId || undefined,
         }),
       })
 
@@ -1117,6 +1122,8 @@ export default function CheckoutPage() {
   return (
     <div className="py-6">
       <h1 className="mb-6 text-2xl font-bold">Checkout</h1>
+
+      <BranchSelector autoLocate={false} title="Picking up / delivering from" />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="space-y-5 rounded-2xl border border-white/10 bg-[#181818] p-6">

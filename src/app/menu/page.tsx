@@ -1,7 +1,9 @@
 'use client'
 import React, { useEffect, useMemo, useState } from 'react'
 import FloatingCartButton from '../../components/CartButton'
+import BranchSelector from '../../components/BranchSelector'
 import ProductCard, { Product } from '../../components/ProductCard'
+import { useCartStore } from '../../store/cart'
 import {
   getDefaultStoreSettings,
   getNextOpeningTime,
@@ -33,13 +35,15 @@ export default function MenuPage() {
     getDefaultStoreSettings()
   )
   const [storeOpen, setStoreOpen] = useState(true)
+  const branchId = useCartStore((s) => s.branchId)
 
   useEffect(() => {
     async function loadData() {
+      const branchQuery = branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''
       const [productsRes, categoriesRes, settingsRes] = await Promise.all([
-        fetch('/api/products').then((response) => response.json()),
+        fetch(`/api/products${branchQuery}`).then((response) => response.json()),
         fetch('/api/categories').then((response) => response.json()),
-        fetch('/api/store-settings').then((response) => response.json()),
+        fetch(`/api/store-settings${branchQuery}`).then((response) => response.json()),
       ])
 
       const mappedProducts = (productsRes.products || []).map((record: ProductRecord) =>
@@ -57,7 +61,7 @@ export default function MenuPage() {
     }
 
     loadData().catch(() => {})
-  }, [])
+  }, [branchId])
 
   useEffect(() => {
     const interval = setInterval(
@@ -138,6 +142,7 @@ export default function MenuPage() {
 
   return (
     <div className="py-6">
+      <BranchSelector />
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold">Our Menu</h1>
         <button

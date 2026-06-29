@@ -76,6 +76,7 @@ export type OrderStatus =
 export type OrderRecord = {
   id: string
   customer_clerk_id: string | null
+  branch_id?: string | null
   status: OrderStatus
   subtotal: number
   discount: number

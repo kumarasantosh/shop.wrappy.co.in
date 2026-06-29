@@ -22,16 +22,17 @@ async function dispatchBorzoOrder(
   wrappyOrderId: string,
   draft: CheckoutDraftPayload
 ): Promise<void> {
+  // Prefer the branch's pickup origin captured at checkout; fall back to env.
   const storeLat = Number(
-    process.env.STORE_LATITUDE || process.env.PORTER_PICKUP_LATITUDE || 0
+    draft.pickup_latitude || process.env.STORE_LATITUDE || process.env.PORTER_PICKUP_LATITUDE || 0
   )
   const storeLng = Number(
-    process.env.STORE_LONGITUDE || process.env.PORTER_PICKUP_LONGITUDE || 0
+    draft.pickup_longitude || process.env.STORE_LONGITUDE || process.env.PORTER_PICKUP_LONGITUDE || 0
   )
   const storeAddress =
-    process.env.PORTER_PICKUP_ADDRESS || 'Wrappy, Kukatpally, Hyderabad'
-  const storeName = process.env.PORTER_PICKUP_NAME || 'Wrappy'
-  const storePhone = process.env.PORTER_PICKUP_PHONE || '9182285342'
+    draft.pickup_address || process.env.PORTER_PICKUP_ADDRESS || 'Wrappy, Kukatpally, Hyderabad'
+  const storeName = draft.pickup_name || process.env.PORTER_PICKUP_NAME || 'Wrappy'
+  const storePhone = draft.pickup_phone || process.env.PORTER_PICKUP_PHONE || '9182285342'
 
   if (!storeLat || !storeLng || !draft.dropoff_latitude || !draft.dropoff_longitude) {
     console.warn('[confirm] Borzo dispatch skipped — missing coordinates')
@@ -126,6 +127,13 @@ type CheckoutDraftPayload = {
   pickup_slot: string | null
   pickup_code: string | null
   razorpay_order_id: string
+  // Branch fulfilment
+  branch_id?: string | null
+  pickup_address?: string
+  pickup_name?: string
+  pickup_phone?: string
+  pickup_latitude?: number | null
+  pickup_longitude?: number | null
   // Delivery-only fields
   dropoff_latitude?: number | null
   dropoff_longitude?: number | null
@@ -249,6 +257,7 @@ export async function POST(req: Request) {
       payment_method: draft.payment_method,
       payment_status: 'paid',
       razorpay_order_id: razorpayOrderId,
+      branch_id: draft.branch_id ?? null,
       // Store delivery coordinates so Borzo can be dispatched later (when admin accepts)
       dropoff_latitude: draft.order_type === 'delivery' ? (draft.dropoff_latitude ?? null) : null,
       dropoff_longitude: draft.order_type === 'delivery' ? (draft.dropoff_longitude ?? null) : null,

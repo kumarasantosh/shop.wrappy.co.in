@@ -1,19 +1,15 @@
 import React from 'react'
 import Link from 'next/link'
-import { auth } from '@clerk/nextjs/server'
 import AdminShell from '../../components/admin/AdminShell'
-import { hasAdminAccess } from '../../lib/admin'
+import { getAccessScope } from '../../lib/admin'
 
 export default async function AdminLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
-  const session = await auth()
-  const allowed = await hasAdminAccess({
-    userId: session.userId,
-    sessionClaims: session.sessionClaims,
-  })
+  const scope = await getAccessScope()
+  const allowed = scope.ok
 
   if (!allowed) {
     return (
@@ -32,5 +28,9 @@ export default async function AdminLayout({
     )
   }
 
-  return <AdminShell>{children}</AdminShell>
+  return (
+    <AdminShell role={scope.role} isSuperAdmin={scope.isSuperAdmin}>
+      {children}
+    </AdminShell>
+  )
 }
