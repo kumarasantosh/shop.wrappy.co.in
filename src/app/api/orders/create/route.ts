@@ -235,16 +235,18 @@ export async function POST(req: Request) {
 
     const isPickup = !body.orderType || body.orderType === 'pickup'
 
-    // Resolve the fulfilling branch (nearest/selected). Falls back to the
-    // single-store env config when no branch is supplied.
-    const branch: BranchRecord | null = body.branchId
+    // Resolve the fulfilling branch (nearest/selected). Non-fatal: an unknown,
+    // stale, or inactive branch id must never block checkout — fall back to the
+    // single-store env config instead.
+    let branch: BranchRecord | null = body.branchId
       ? await getBranchById(String(body.branchId))
       : null
     if (body.branchId && !branch) {
-      return NextResponse.json({ error: 'invalid_branch' }, { status: 400 })
+      console.warn('[orders/create] branch not found, falling back to default store:', body.branchId)
     }
     if (branch && branch.is_active === false) {
-      return NextResponse.json({ error: 'branch_inactive' }, { status: 400 })
+      console.warn('[orders/create] branch inactive, falling back to default store:', branch.id)
+      branch = null
     }
     const pickupOrigin = resolvePickupOrigin(branch)
 
