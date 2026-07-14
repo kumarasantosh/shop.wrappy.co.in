@@ -7,7 +7,7 @@ import { SupabaseProvider } from '../lib/supabase'
 import Navbar from '../components/Navbar'
 import { RestaurantSchema, WebsiteSchema } from '../components/SeoSchema'
 
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://wrappy.in'
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://shop.wrapznfryz.com'
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
