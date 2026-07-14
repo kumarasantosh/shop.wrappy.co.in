@@ -1,13 +1,13 @@
 // src/app/api/catalog-feed/route.ts
 // Generates a Meta-compatible XML product feed from Supabase.
 // Register this URL in Meta Commerce Manager → Data Sources → Data Feed:
-//   https://shop.wrappy.co.in/api/catalog-feed
+//   https://shop.wrapznfryz.com/api/catalog-feed
 // Set refresh to daily.
 
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '../../../lib/supabaseAdmin'
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shop.wrappy.co.in'
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://shop.wrapznfryz.com'
 const BRAND = process.env.RESTAURANT_NAME || 'Wrappy'
 
 export async function GET() {
