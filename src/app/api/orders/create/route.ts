@@ -266,7 +266,7 @@ export async function POST(req: Request) {
 
       const { data: productRows, error: productsError } = await supabaseAdmin
         .from('products')
-        .select('id,name,is_available,price')
+        .select('id,name,is_available,price,addons')
         .in('id', uniqueProductIds)
 
       if (productsError) {
@@ -285,16 +285,32 @@ export async function POST(req: Request) {
         .filter(({ row, ov }) => !row || row.is_available === false || (ov && ov.is_available === false))
         .map(({ row }) => String(row?.name || 'Item'))
 
-      // Apply branch price overrides. The client price already includes addon
-      // amounts, so we swap only the base product price (override − catalogue),
-      // preserving any addon charges on the line.
+      // Calculate item price entirely on the server to prevent client-side tampering.
       for (const item of items) {
         const row = productMap.get(String(item.id))
+        if (!row) continue
+
+        // Start with base price (from branch override or product catalogue)
+        let unitPrice = Number(row.price)
         const ov = branchOverrides.get(String(item.id))
-        if (row && ov && ov.price_override != null) {
-          const delta = Number(ov.price_override) - Number(row.price)
-          if (Number.isFinite(delta)) item.price = Math.max(0, Number(item.price) + delta)
+        if (ov && ov.price_override != null) {
+          unitPrice = Number(ov.price_override)
         }
+
+        // Add valid addon prices from the server catalogue
+        if (Array.isArray(item.addons) && Array.isArray(row.addons)) {
+          for (const itemAddon of item.addons) {
+            const serverAddon = row.addons.find((a: any) => a.id === itemAddon.id || a.name === itemAddon.name)
+            if (serverAddon) {
+              unitPrice += Number(serverAddon.price || 0)
+              // Update the addon price to the server one just in case the client sent a fake one
+              itemAddon.price = Number(serverAddon.price || 0)
+            }
+          }
+        }
+        
+        // Overwrite the client-provided price with the server-calculated true price
+        item.price = Math.max(0, unitPrice)
       }
 
       if (unavailable.length > 0) {

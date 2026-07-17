@@ -72,3 +72,23 @@ input, textarea, select {
 input:focus, textarea:focus, select:focus {
   border-color: #fff;
 }
+
+/* Delivery page input style (replaces styled-jsx) */
+.delivery-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  font-size: 0.875rem;
+  outline: none;
+  background: #181818;
+  color: #fff;
+  transition: border-color 0.2s;
+}
+.delivery-input::placeholder {
+  color: #4b5563;
+}
+.delivery-input:focus {
+  border-color: #f97316;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.15);
+}

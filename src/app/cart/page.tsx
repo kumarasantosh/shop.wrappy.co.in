@@ -342,7 +342,7 @@ export default function CartPage() {
             href="/checkout"
             className="block w-full rounded-xl bg-white py-3 text-center text-sm font-semibold text-black transition-colors hover:bg-gray-200"
           >
-            Razorpay Checkout
+            Proceed to Checkout
           </Link>
         </div>
       </div>

@@ -6,6 +6,7 @@ import PushAlertsButton from '../../../components/admin/PushAlertsButton'
 import { parseOrderMeta, stripOrderMeta } from '../../../lib/orderMeta'
 import { useClerkSupabaseClient } from '../../../lib/supabase'
 import { OrderItemRecord, OrderRecord } from '../../../lib/types'
+import type { RealtimeChannel } from '@supabase/supabase-js'
 
 const ACCEPT_TIMER_SECONDS = 300
 
@@ -700,31 +701,60 @@ export default function AdminOrdersPage() {
     // identity; RLS only streams `orders` to an authenticated admin.
     if (!isSessionLoaded || !hasSession) return
 
-    const channel = supabase
-      .channel('admin-orders-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'orders' },
-        (payload) => {
-          handleRealtimeEvent(
-            payload as unknown as Parameters<typeof handleRealtimeEvent>[0]
-          ).catch(() => { })
-        }
-      )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          setLiveStatus('live')
-          // Fires on first connect and again whenever the socket re-subscribes
-          // after a drop. Reconcile against the server once on (re)connect so
-          // we never miss events that fired while disconnected. Event-driven
-          // recovery, not periodic polling.
-          if (hasInitialOrderLoadRef.current) fetchOrders().catch(() => { })
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          setLiveStatus('reconnecting')
-        } else if (status === 'CLOSED') {
-          setLiveStatus('connecting')
-        }
-      })
+    let disposed = false
+    let channel: RealtimeChannel | null = null
+    let consecutiveFailures = 0
+    let recreateTimer: number | null = null
+
+    // Build (or rebuild) the channel. A channel instance whose joins keep
+    // getting rejected can wedge inside realtime-js; after a few consecutive
+    // failures we tear it down and start a fresh one with a fresh token.
+    const createChannel = () => {
+      if (disposed) return
+      if (channel) supabase.removeChannel(channel)
+      channel = supabase
+        .channel('admin-orders-realtime')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'orders' },
+          (payload) => {
+            handleRealtimeEvent(
+              payload as unknown as Parameters<typeof handleRealtimeEvent>[0]
+            ).catch(() => { })
+          }
+        )
+        .subscribe((status, err) => {
+          if (disposed) return
+          if (status === 'SUBSCRIBED') {
+            consecutiveFailures = 0
+            setLiveStatus('live')
+            // Fires on first connect and again whenever the socket re-subscribes
+            // after a drop. Reconcile against the server once on (re)connect so
+            // we never miss events that fired while disconnected. Event-driven
+            // recovery, not periodic polling.
+            if (hasInitialOrderLoadRef.current) fetchOrders().catch(() => { })
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            // Surface WHY the join failed — this distinguishes a config problem
+            // (rejected token, table missing from the supabase_realtime
+            // publication) from a transient network drop.
+            console.error(
+              '[orders-realtime] channel', status,
+              err instanceof Error ? err.message : err ?? '(no error detail)'
+            )
+            setLiveStatus('reconnecting')
+            consecutiveFailures += 1
+            if (consecutiveFailures >= 3 && recreateTimer === null) {
+              consecutiveFailures = 0
+              recreateTimer = window.setTimeout(() => {
+                recreateTimer = null
+                refreshSocketAuth().then(() => createChannel()).catch(() => { })
+              }, 2000)
+            }
+          } else if (status === 'CLOSED') {
+            setLiveStatus('connecting')
+          }
+        })
+    }
 
     // ── "Always-on" watchdog ───────────────────────────────────
     // Kitchen tablets sleep, wifi drops, and the tab gets backgrounded
@@ -746,14 +776,22 @@ export default function AdminOrdersPage() {
     }
 
     const ensureLive = async (resync = false) => {
+      const ch = channel
+      if (!ch) return
       const socketDown = !supabase.realtime.isConnected()
-      const channelDown = channel.state !== 'joined' && channel.state !== 'joining'
+      const channelDown = ch.state !== 'joined' && ch.state !== 'joining'
       // Always hand the socket a fresh token before (re)connecting.
       if (socketDown || channelDown) await refreshSocketAuth()
       if (socketDown) supabase.realtime.connect()
       if (channelDown) {
         setLiveStatus('reconnecting')
-        channel.subscribe() // rejoin the existing channel with the fresh token
+        if (ch.state === 'closed') {
+          // A cleanly-closed channel can be rejoined in place.
+          ch.subscribe()
+        } else {
+          // 'errored'/'leaving' instances can't be re-subscribed — rebuild.
+          createChannel()
+        }
       }
       // Resync ONLY on an explicit wake/online/focus event, or when we just had
       // to recover a dead connection. A healthy socket triggers no fetch — so
@@ -762,6 +800,9 @@ export default function AdminOrdersPage() {
         fetchOrders().catch(() => { })
       }
     }
+
+    // Initial connect — with a fresh token already applied to the socket.
+    refreshSocketAuth().then(() => createChannel()).catch(() => createChannel())
 
     const wake = () => { ensureLive(true).catch(() => {}) } // event-driven catch-up
     const onVisible = () => {
@@ -782,15 +823,35 @@ export default function AdminOrdersPage() {
     }, 40000)
 
     return () => {
+      disposed = true
       window.removeEventListener('online', wake)
       window.removeEventListener('focus', wake)
       document.removeEventListener('visibilitychange', onVisible)
       window.clearInterval(liveness)
       window.clearInterval(authRefresh)
-      supabase.removeChannel(channel)
+      if (recreateTimer !== null) window.clearTimeout(recreateTimer)
+      if (channel) supabase.removeChannel(channel)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, isSessionLoaded, hasSession])
+
+  /* ── Safety net: poll while the socket is NOT live ──────────────
+     Realtime is the primary transport, but if the channel can't connect
+     (auth/config problem, hostile network, captive portal wifi) the kitchen
+     must still receive orders. This interval runs ONLY while the badge is
+     not "live" and stops the moment the socket connects — so a healthy
+     panel never polls. New orders found this way still trigger the sound
+     alert via fetchOrders(). */
+  useEffect(() => {
+    if (liveStatus === 'live') return
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'visible' && hasInitialOrderLoadRef.current) {
+        fetchOrders().catch(() => { })
+      }
+    }, 12000)
+    return () => window.clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveStatus])
 
   /* ── Status actions ── */
   async function updateStatus(id: string, status: OrderRecord['status']) {

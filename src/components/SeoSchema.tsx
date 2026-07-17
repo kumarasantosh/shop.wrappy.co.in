@@ -12,7 +12,7 @@ export function RestaurantSchema() {
         image: `${siteUrl}/og-image.jpg`,
         description:
             'Wrappy is a premium food ordering restaurant in Hyderabad offering burgers, wraps, shakes, and more with self-pickup and online ordering.',
-        telephone: '+91-XXXXXXXXXX',
+        telephone: process.env.NEXT_PUBLIC_STORE_PHONE || undefined,
         address: {
             '@type': 'PostalAddress',
             addressLocality: 'Hyderabad',

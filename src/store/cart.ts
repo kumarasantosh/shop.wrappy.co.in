@@ -75,6 +75,8 @@ export const useCartStore = create<CartState>()(
         const items = Array.isArray(persisted?.items) ? persisted.items : []
         return {
           couponCode: String(persisted?.couponCode || ''),
+          branchId: String(persisted?.branchId || ''),
+          branchName: String(persisted?.branchName || ''),
           items: items.map((item: any, index: number) => ({
             lineId: String(item.lineId || `${item.id || 'item'}::legacy::${index}`),
             id: String(item.id || ''),

@@ -12,7 +12,7 @@
  * so the auth token is never exposed to the browser.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -79,12 +79,12 @@ const EMPTY_POINT: Point = {
 // ─── Status badge colours ─────────────────────────────────────────────────────
 
 const STATUS_COLOURS: Record<string, string> = {
-  new: 'bg-yellow-100 text-yellow-800',
-  available: 'bg-blue-100 text-blue-800',
-  active: 'bg-green-100 text-green-800',
-  delayed: 'bg-orange-100 text-orange-800',
-  completed: 'bg-emerald-100 text-emerald-800',
-  canceled: 'bg-red-100 text-red-800',
+  new: 'bg-yellow-500/10 text-yellow-400',
+  available: 'bg-blue-500/10 text-blue-400',
+  active: 'bg-green-500/10 text-green-400',
+  delayed: 'bg-orange-500/10 text-orange-400',
+  completed: 'bg-emerald-500/10 text-emerald-400',
+  canceled: 'bg-red-500/10 text-red-400',
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -235,12 +235,12 @@ export default function DeliveryPage() {
   // ── UI ────────────────────────────────────────────────────────────────────
 
   return (
-    <main className="min-h-screen bg-gray-50 py-10 px-4">
+    <main className="min-h-screen bg-[#0F0F0F] text-white py-10 px-4">
       <div className="max-w-xl mx-auto">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">Borzo Delivery</h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <h1 className="text-2xl font-bold text-white">Borzo Delivery</h1>
+          <p className="text-sm text-gray-400 mt-1">
             Calculate → Confirm → Track your delivery
           </p>
 
@@ -252,7 +252,7 @@ export default function DeliveryPage() {
                 className={`px-3 py-1 rounded-full font-medium ${
                   step === s
                     ? 'bg-orange-500 text-white'
-                    : 'bg-gray-200 text-gray-500'
+                    : 'bg-[#181818] text-gray-400 border border-white/10'
                 }`}
               >
                 {i + 1}. {s.charAt(0).toUpperCase() + s.slice(1)}
@@ -263,7 +263,7 @@ export default function DeliveryPage() {
 
         {/* Error banner */}
         {errorMsg && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
             {errorMsg}
           </div>
         )}
@@ -302,7 +302,7 @@ export default function DeliveryPage() {
                 </Field>
                 <Field label="Weight (kg)">
                   <input
-                    className="input"
+                    className="delivery-input"
                     type="number"
                     min="0.1"
                     step="0.1"
@@ -345,7 +345,7 @@ export default function DeliveryPage() {
               </div>
 
               {quote.warnings.length > 0 && (
-                <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
+                <div className="mt-3 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-sm text-yellow-300">
                   <strong>Warnings:</strong>
                   <ul className="list-disc ml-4 mt-1">
                     {quote.warnings.map((w) => (
@@ -359,7 +359,7 @@ export default function DeliveryPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => setStep('form')}
-                className="flex-1 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                className="flex-1 py-3 border border-white/20 text-white rounded-lg hover:bg-white/10"
               >
                 ← Edit details
               </button>
@@ -392,7 +392,7 @@ export default function DeliveryPage() {
 
               {order.tracking_urls.length > 0 && (
                 <div className="mt-3 space-y-1">
-                  <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">
+                  <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">
                     Tracking links
                   </p>
                   {order.tracking_urls.map(({ address, url }) => (
@@ -427,13 +427,13 @@ export default function DeliveryPage() {
                 <div className="space-y-3">
                   <div className="flex items-center gap-3">
                     <StatusBadge status={track.status} />
-                    <span className="text-sm text-gray-600">
+                    <span className="text-sm text-gray-400">
                       {track.status_description}
                     </span>
                   </div>
 
                   {track.courier && (
-                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center gap-3 p-3 bg-[#181818] border border-white/10 rounded-lg">
                       {track.courier.photo_url && (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
@@ -444,7 +444,7 @@ export default function DeliveryPage() {
                       )}
                       <div className="text-sm">
                         <p className="font-medium">{track.courier.name}</p>
-                        <p className="text-gray-500">{track.courier.phone}</p>
+                        <p className="text-gray-400">{track.courier.phone}</p>
                         {track.courier.latitude && (
                           <p className="text-xs text-gray-400">
                             📍 {Number(track.courier.latitude).toFixed(4)},{' '}
@@ -473,7 +473,7 @@ export default function DeliveryPage() {
                   )}
                 </div>
               ) : (
-                <p className="text-sm text-gray-500">Loading status…</p>
+                <p className="text-sm text-gray-400">Loading status…</p>
               )}
             </Section>
 
@@ -483,7 +483,7 @@ export default function DeliveryPage() {
                 <button
                   onClick={handleCancel}
                   disabled={loading}
-                  className="w-full py-2 border border-red-300 text-red-600 hover:bg-red-50 rounded-lg text-sm disabled:opacity-50"
+                  className="w-full py-2 border border-red-500/30 text-red-400 hover:bg-red-500/10 rounded-lg text-sm disabled:opacity-50"
                 >
                   {loading ? 'Cancelling…' : 'Cancel order'}
                 </button>
@@ -498,7 +498,7 @@ export default function DeliveryPage() {
                 setTrack(null)
                 setDropoff(EMPTY_POINT)
               }}
-              className="w-full py-2 text-sm text-gray-500 hover:text-gray-700"
+              className="w-full py-2 text-sm text-gray-400 hover:text-white"
             >
               ← New delivery
             </button>
@@ -506,22 +506,7 @@ export default function DeliveryPage() {
         )}
       </div>
 
-      {/* Inline styles for the input class */}
-      <style jsx global>{`
-        .input {
-          width: 100%;
-          border: 1px solid #d1d5db;
-          border-radius: 0.5rem;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.875rem;
-          outline: none;
-          background: white;
-        }
-        .input:focus {
-          border-color: #f97316;
-          box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.2);
-        }
-      `}</style>
+
     </main>
   )
 }
@@ -536,8 +521,8 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
-      <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+    <div className="bg-[#181818] border border-white/10 rounded-xl p-4 shadow-sm">
+      <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-3">
         {title}
       </h2>
       {children}
@@ -554,7 +539,7 @@ function Field({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs font-medium text-gray-600">{label}</label>
+      <label className="text-xs font-medium text-gray-400">{label}</label>
       {children}
     </div>
   )
@@ -576,7 +561,7 @@ function PointFields({
     <div className="space-y-3">
       <Field label={`${label} address`}>
         <input
-          className="input"
+          className="delivery-input"
           value={value.address}
           onChange={set('address')}
           placeholder="Full street address"
@@ -623,7 +608,7 @@ function PointFields({
       </div>
       <Field label="Note for courier (optional)">
         <input
-          className="input"
+          className="delivery-input"
           value={value.note}
           onChange={set('note')}
           placeholder="e.g. Ring doorbell"
@@ -644,8 +629,8 @@ function PriceLine({
 }) {
   return (
     <div className="flex justify-between items-center text-sm">
-      <span className="text-gray-500">{label}</span>
-      <span className={bold ? 'font-bold text-gray-900' : 'text-gray-700'}>
+      <span className="text-gray-400">{label}</span>
+      <span className={bold ? 'font-bold text-white' : 'text-gray-300'}>
         {value}
       </span>
     </div>
@@ -653,7 +638,7 @@ function PriceLine({
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const cls = STATUS_COLOURS[status] || 'bg-gray-100 text-gray-700'
+  const cls = STATUS_COLOURS[status] || 'bg-white/10 text-gray-300'
   return (
     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>
       {status}
