@@ -252,7 +252,7 @@ export async function POST(req: Request) {
 
     const items = body.items || []
     if (items.length === 0) {
-      return NextResponse.json({ error: 'empty_cart' }, { status: 400 })
+      return NextResponse.json({ error: 'empty_cart', reason: 'empty_cart' }, { status: 400 })
     }
 
     if (hasSupabase) {
@@ -261,7 +261,7 @@ export async function POST(req: Request) {
       )
 
       if (uniqueProductIds.length === 0) {
-        return NextResponse.json({ error: 'invalid_cart_items' }, { status: 400 })
+        return NextResponse.json({ error: 'invalid_cart_items', reason: 'invalid_cart_items' }, { status: 400 })
       }
 
       const { data: productRows, error: productsError } = await supabaseAdmin
@@ -270,7 +270,11 @@ export async function POST(req: Request) {
         .in('id', uniqueProductIds)
 
       if (productsError) {
-        return NextResponse.json({ error: productsError.message }, { status: 500 })
+        console.error('[orders/create] products query failed:', productsError)
+        return NextResponse.json(
+          { error: 'products_query_failed', reason: productsError.message },
+          { status: 500 }
+        )
       }
 
       const productMap = new Map(
@@ -327,7 +331,7 @@ export async function POST(req: Request) {
 
     const phone = String(body.phone || '').trim()
     if (!phone) {
-      return NextResponse.json({ error: 'phone_required' }, { status: 400 })
+      return NextResponse.json({ error: 'phone_required', reason: 'phone_required' }, { status: 400 })
     }
 
     // ── Pickup slot validation (pickup only) ─────────────────────────────
@@ -340,27 +344,37 @@ export async function POST(req: Request) {
         body.pickupSlotTimezoneOffsetMinutes
       )
       if (!slotDate) {
-        return NextResponse.json({ error: 'pickup_slot_required' }, { status: 400 })
+        return NextResponse.json({ error: 'pickup_slot_required', reason: 'pickup_slot_required' }, { status: 400 })
       }
       if (slotDate.getTime() < Date.now() - 60_000) {
-        return NextResponse.json({ error: 'pickup_slot_in_past' }, { status: 400 })
+        return NextResponse.json({ error: 'pickup_slot_in_past', reason: 'pickup_slot_in_past' }, { status: 400 })
       }
       pickupSlotIso = slotDate.toISOString()
       pickupCode = generatePickupVerificationCode()
     } else {
       // Delivery: require customer coordinates
       if (!body.latitude || !body.longitude) {
-        return NextResponse.json({ error: 'delivery_coordinates_required' }, { status: 400 })
+        return NextResponse.json(
+          { error: 'delivery_coordinates_required', reason: 'delivery_coordinates_required' },
+          { status: 400 }
+        )
       }
     }
 
     if (body.paymentMethod && body.paymentMethod !== 'razorpay') {
-      return NextResponse.json({ error: 'payment_method_not_supported' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'payment_method_not_supported', reason: 'payment_method_not_supported' },
+        { status: 400 }
+      )
     }
     const paymentMethod = 'razorpay' as const
 
     if (!KEY_ID || !KEY_SECRET) {
-      return NextResponse.json({ error: 'razorpay_not_configured' }, { status: 503 })
+      console.error('[orders/create] Razorpay keys missing in this environment')
+      return NextResponse.json(
+        { error: 'razorpay_not_configured', reason: 'razorpay_not_configured' },
+        { status: 503 }
+      )
     }
 
     let settings = getDefaultStoreSettings()
@@ -381,7 +395,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'store_closed', reason: 'manually_closed' }, { status: 400 })
     }
     if (!currentlyOpen && !settings.allow_preorder) {
-      return NextResponse.json({ error: 'store_closed' }, { status: 400 })
+      return NextResponse.json({ error: 'store_closed', reason: 'currently_closed' }, { status: 400 })
     }
 
     const subtotal = calcSubtotal(
@@ -538,6 +552,13 @@ export async function POST(req: Request) {
       total,
     })
   } catch (err: any) {
-    return NextResponse.json({ error: (err && err.message) || 'error' }, { status: 500 })
+    // Log full detail server-side (visible in Vercel function logs) since the
+    // client only ever surfaces a short reason string.
+    console.error('[orders/create] unhandled error:', err)
+    const message =
+      (err && err.error && err.error.description) || // Razorpay SDK error shape
+      (err && err.message) ||
+      'error'
+    return NextResponse.json({ error: 'unhandled_error', reason: message }, { status: 500 })
   }
 }

@@ -1008,8 +1008,8 @@ export default function CheckoutPage() {
           alert(`${names} currently not available. Please update your cart.`)
           return
         }
-        const reason = payload.reason ? ` (${payload.reason})` : ''
-        alert(`Unable to place order${reason}`)
+        const reason = payload.reason || payload.error
+        alert(reason ? `Unable to place order (${reason})` : 'Unable to place order')
         return
       }
 
